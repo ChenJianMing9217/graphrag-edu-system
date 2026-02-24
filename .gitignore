@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# venv
+.venv/
+env/
+
+# system
+.DS_Store
+
+# logs
+*.log
+
+# uploads
+uploads/
+dialogue_cache/
+archive/
+dialogue_states/
+
+# secrets
+.env
+config/*.json

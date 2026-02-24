@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}首頁 - 早療系統{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <!-- 主標題區域 -->
+
+
+        <!-- 功能卡片區域 -->
+        <div class="row g-4 mb-5">
+            <div class="col-md-6">
+                <div class="card h-100 glass-effect slide-in-right">
+                    <div class="card-body text-center p-5">
+                        <div class="icon-wrapper mb-4">
+                            <i class="fas fa-user-md fa-4x text-primary"></i>
+                        </div>
+                        <h4 class="card-title mb-3">早療人員</h4>
+                        <p class="card-text fs-5 mb-4">管理照護者帳號、兒童資料，上傳聯評報告，提供專業的早療服務管理</p>
+                        <div class="feature-list text-start mb-4">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="fas fa-check-circle text-success me-3"></i>
+                                <span>照護者帳號管理</span>
+                            </div>
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="fas fa-check-circle text-success me-3"></i>
+                                <span>兒童資料維護</span>
+                            </div>
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="fas fa-check-circle text-success me-3"></i>
+                                <span>聯評報告上傳</span>
+                            </div>
+                        </div>
+                        <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg apple-glow">
+                            <i class="fas fa-sign-in-alt me-2"></i>立即登入
+                        </a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card h-100 glass-effect slide-in-right" style="animation-delay: 0.1s;">
+                    <div class="card-body text-center p-5">
+                        <div class="icon-wrapper mb-4">
+                            <i class="fas fa-user fa-4x text-success"></i>
+                        </div>
+                        <h4 class="card-title mb-3">照護者</h4>
+                        <p class="card-text fs-5 mb-4">查看兒童聯評報告，下載相關文件，與早療人員保持密切溝通</p>
+                        <div class="feature-list text-start mb-4">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="fas fa-check-circle text-success me-3"></i>
+                                <span>報告查看下載</span>
+                            </div>
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="fas fa-check-circle text-success me-3"></i>
+                                <span>智慧諮詢</span>
+                            </div>
+                            <!-- <div class="d-flex align-items-center mb-2">
+                                <i class="fas fa-check-circle text-success me-3"></i>
+                                <span>進度追蹤管理</span>
+                            </div> -->
+                        </div>
+                        <a href="{{ url_for('login') }}" class="btn btn-success btn-lg apple-glow">
+                            <i class="fas fa-sign-in-alt me-2"></i>立即登入
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 註冊提示 -->
+        <div class="text-center">
+            <div class="card glass-effect fade-in-up" style="animation-delay: 0.8s;">
+                <div class="card-body p-4">
+                    <h5 class="mb-3">
+                        <i class="fas fa-user-plus text-primary me-2"></i>還沒有帳號？
+                    </h5>
+                    <p class="mb-3">立即註冊開始使用早療系統</p>
+                    <a href="{{ url_for('register') }}" class="btn btn-outline-primary btn-lg apple-glow">
+                        <i class="fas fa-user-plus me-2"></i>立即註冊
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.hero-section {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: var(--apple-blur);
+    border-radius: var(--apple-radius-2xl);
+    padding: var(--apple-spacing-2xl) var(--apple-spacing-xl);
+    border: 2px solid rgba(0, 0, 0, 0.15);
+    box-shadow: var(--apple-shadow-xl);
+    margin-bottom: var(--apple-spacing-2xl);
+}
+
+.icon-wrapper {
+    background: linear-gradient(135deg, rgba(0, 0, 0, 0.05), rgba(100, 100, 100, 0.05));
+    border-radius: 50%;
+    width: 120px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    border: 3px solid rgba(0, 0, 0, 0.2);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.icon-wrapper:hover {
+    transform: scale(1.05);
+    box-shadow: var(--apple-shadow-md);
+}
+
+.feature-item {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    padding: var(--apple-spacing-md);
+    border-radius: var(--apple-radius-md);
+}
+
+.feature-item:hover {
+    transform: translateY(-8px);
+    background: rgba(0, 0, 0, 0.05);
+    backdrop-filter: var(--apple-blur);
+    box-shadow: var(--apple-shadow-lg);
+}
+
+.btn-outline-primary {
+    border: 3px solid var(--apple-black);
+    color: var(--apple-black);
+    background: transparent;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-outline-primary::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: var(--apple-black);
+    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: -1;
+}
+
+.btn-outline-primary:hover::before {
+    left: 0;
+}
+
+.btn-outline-primary:hover {
+    color: var(--apple-white);
+    transform: translateY(-2px);
+    box-shadow: var(--apple-shadow-md);
+}
+
+/* 蘋果風格特殊動畫 */
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+}
+
+.icon-wrapper i {
+    animation: float 3s ease-in-out infinite;
+}
+
+.icon-wrapper i:nth-child(1) {
+    animation-delay: 0s;
+}
+
+/* 響應式優化 */
+@media (max-width: 768px) {
+    .hero-section {
+        padding: var(--apple-spacing-lg);
+    }
+    
+    .icon-wrapper {
+        width: 80px;
+        height: 80px;
+    }
+    
+    .feature-item {
+        margin-bottom: var(--apple-spacing-md);
+    }
+}
+</style>
+{% endblock %}

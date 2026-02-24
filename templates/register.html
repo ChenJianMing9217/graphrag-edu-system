@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block title %}註冊 - 早療系統{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6 col-md-8">
+        <div class="card glass-effect">
+            <div class="card-header text-center py-4">
+                <div class="register-icon mb-3">
+                    <i class="fas fa-user-plus fa-3x text-success"></i>
+                </div>
+                <h3 class="mb-0">加入我們</h3>
+                <p class="text-muted mt-2">創建您的帳號開始使用早療系統</p>
+            </div>
+            <div class="card-body p-5">
+                <form method="POST" class="needs-validation" novalidate>
+                    <div class="row">
+                        <div class="col-md-6 mb-4">
+                            <label for="username" class="form-label">
+                                <i class="fas fa-user me-2"></i>用戶名
+                            </label>
+                            <input type="text" class="form-control form-control-lg" id="username" name="username" 
+                                   placeholder="請輸入用戶名" required>
+                            <div class="invalid-feedback">
+                                請輸入有效的用戶名
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6 mb-4">
+                            <label for="email" class="form-label">
+                                <i class="fas fa-envelope me-2"></i>電子郵件
+                            </label>
+                            <input type="email" class="form-control form-control-lg" id="email" name="email" 
+                                   placeholder="請輸入電子郵件" required>
+                            <div class="invalid-feedback">
+                                請輸入有效的電子郵件
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label for="password" class="form-label">
+                            <i class="fas fa-lock me-2"></i>密碼
+                        </label>
+                        <div class="input-group">
+                            <input type="password" class="form-control form-control-lg" id="password" name="password" 
+                                   placeholder="請輸入密碼" required>
+                            <button class="btn btn-outline-secondary" type="button" id="togglePassword">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                        <div class="invalid-feedback">
+                            請輸入密碼
+                        </div>
+                        <div class="form-text">
+                            <i class="fas fa-info-circle me-1"></i>密碼長度至少8個字符
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label for="role" class="form-label">
+                            <i class="fas fa-user-tag me-2"></i>身分選擇
+                        </label>
+                        <select class="form-select form-select-lg" id="role" name="role" required>
+                            <option value="">請選擇您的身分</option>
+                            <option value="therapist">
+                                <i class="fas fa-user-md me-2"></i>早療人員
+                            </option>
+                            <option value="caregiver">
+                                <i class="fas fa-user me-2"></i>照護者
+                            </option>
+                        </select>
+                        <div class="invalid-feedback">
+                            請選擇您的身分
+                        </div>
+                    </div>
+                    
+                    <!-- 身分說明 -->
+                    <div class="mb-4">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="role-info" id="therapist-info" style="display: none;">
+                                    <div class="alert alert-info">
+                                        <h6><i class="fas fa-user-md me-2"></i>早療人員</h6>
+                                        <small>管理照護者帳號、兒童資料，上傳聯評報告</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="role-info" id="caregiver-info" style="display: none;">
+                                    <div class="alert alert-success">
+                                        <h6><i class="fas fa-user me-2"></i>照護者</h6>
+                                        <small>查看兒童聯評報告，下載相關文件</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid mb-4">
+                        <button type="submit" class="btn btn-success btn-lg">
+                            <i class="fas fa-user-plus me-2"></i>創建帳號
+                        </button>
+                    </div>
+                </form>
+                
+                <div class="text-center">
+                    <div class="divider mb-4">
+                        <span class="divider-text">或</span>
+                    </div>
+                    <p class="mb-0">
+                        已有帳號？ 
+                        <a href="{{ url_for('login') }}" class="text-primary fw-bold">
+                            <i class="fas fa-sign-in-alt me-1"></i>立即登入
+                        </a>
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 返回首頁 -->
+        <div class="text-center mt-4">
+            <a href="{{ url_for('index') }}" class="btn btn-outline-light">
+                <i class="fas fa-arrow-left me-2"></i>返回首頁
+            </a>
+        </div>
+    </div>
+</div>
+
+<style>
+.register-icon {
+    background: linear-gradient(135deg, rgba(52, 199, 89, 0.1), rgba(0, 122, 255, 0.1));
+    border-radius: 50%;
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    border: 2px solid rgba(52, 199, 89, 0.2);
+}
+
+.divider {
+    position: relative;
+    text-align: center;
+}
+
+.divider::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.divider-text {
+    background: var(--apple-card-bg);
+    padding: 0 1rem;
+    color: var(--apple-gray);
+    font-size: 0.9rem;
+}
+
+.form-control-lg, .form-select-lg {
+    padding: 1rem 1.25rem;
+    font-size: 1.1rem;
+}
+
+.btn-outline-light {
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    transition: all 0.3s ease;
+}
+
+.btn-outline-light:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: white;
+    transform: translateY(-2px);
+}
+
+.role-info {
+    transition: all 0.3s ease;
+}
+
+.role-info.show {
+    animation: fadeInUp 0.3s ease-out;
+}
+
+/* 表單驗證樣式 */
+.was-validated .form-control:invalid,
+.was-validated .form-select:invalid {
+    border-color: var(--apple-red);
+    box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.2);
+}
+
+.was-validated .form-control:valid,
+.was-validated .form-select:valid {
+    border-color: var(--apple-green);
+    box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.2);
+}
+</style>
+
+<script>
+// 密碼顯示/隱藏切換
+document.getElementById('togglePassword').addEventListener('click', function() {
+    const passwordField = document.getElementById('password');
+    const icon = this.querySelector('i');
+    
+    if (passwordField.type === 'password') {
+        passwordField.type = 'text';
+        icon.classList.remove('fa-eye');
+        icon.classList.add('fa-eye-slash');
+    } else {
+        passwordField.type = 'password';
+        icon.classList.remove('fa-eye-slash');
+        icon.classList.add('fa-eye');
+    }
+});
+
+// 身分選擇顯示說明
+document.getElementById('role').addEventListener('change', function() {
+    const selectedRole = this.value;
+    const therapistInfo = document.getElementById('therapist-info');
+    const caregiverInfo = document.getElementById('caregiver-info');
+    
+    // 隱藏所有說明
+    therapistInfo.style.display = 'none';
+    caregiverInfo.style.display = 'none';
+    
+    // 顯示對應說明
+    if (selectedRole === 'therapist') {
+        therapistInfo.style.display = 'block';
+        therapistInfo.classList.add('show');
+    } else if (selectedRole === 'caregiver') {
+        caregiverInfo.style.display = 'block';
+        caregiverInfo.classList.add('show');
+    }
+});
+
+// 表單驗證
+(function() {
+    'use strict';
+    window.addEventListener('load', function() {
+        var forms = document.getElementsByClassName('needs-validation');
+        var validation = Array.prototype.filter.call(forms, function(form) {
+            form.addEventListener('submit', function(event) {
+                if (form.checkValidity() === false) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                form.classList.add('was-validated');
+            }, false);
+        });
+    }, false);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,426 @@
+{% extends "base.html" %}
+
+{% block title %}早療人員儀錶板 - 早療系統{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="dashboard-header mb-5">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <h1 class="display-5 mb-2">
+                        <i class="fas fa-user-md text-primary me-3"></i>早療人員儀錶板
+                    </h1>
+                    <p class="lead text-muted">歡迎回來，{{ current_user.username }}！</p>
+                </div>
+                <div class="dashboard-stats">
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="fas fa-child text-success"></i>
+                        </div>
+                        <div class="stat-content">
+                            <div class="stat-number">{{ children|length if children else 0 }}</div>
+                            <div class="stat-label">兒童數量</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="fas fa-user text-warning"></i>
+                        </div>
+                        <div class="stat-content">
+                            <div class="stat-number">{{ caregivers|length if caregivers else 0 }}</div>
+                            <div class="stat-label">照護者數量</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增照護者 -->
+<div class="row mb-5">
+    <div class="col-12">
+        <div class="card glass-effect">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-user-plus text-success me-2"></i>新增照護者帳號
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('add_caregiver') }}" class="needs-validation" novalidate>
+                    <div class="row g-4">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="username" class="form-label">
+                                    <i class="fas fa-user me-2"></i>用戶名
+                                </label>
+                                <input type="text" class="form-control form-control-lg" id="username" name="username" 
+                                       placeholder="請輸入用戶名" required>
+                                <div class="invalid-feedback">
+                                    請輸入有效的用戶名
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="email" class="form-label">
+                                    <i class="fas fa-envelope me-2"></i>電子郵件
+                                </label>
+                                <input type="email" class="form-control form-control-lg" id="email" name="email" 
+                                       placeholder="請輸入電子郵件" required>
+                                <div class="invalid-feedback">
+                                    請輸入有效的電子郵件
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="password" class="form-label">
+                                    <i class="fas fa-lock me-2"></i>密碼
+                                </label>
+                                <input type="password" class="form-control form-control-lg" id="password" name="password" 
+                                       placeholder="請輸入密碼" required>
+                                <div class="invalid-feedback">
+                                    請輸入密碼
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-grid mt-4">
+                        <button type="submit" class="btn btn-success btn-lg">
+                            <i class="fas fa-user-plus me-2"></i>新增照護者
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增兒童資料 -->
+<div class="row mb-5">
+    <div class="col-12">
+        <div class="card glass-effect">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-child text-primary me-2"></i>新增兒童資料
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('add_child') }}" class="needs-validation" novalidate>
+                    <div class="row g-4">
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="name" class="form-label">
+                                    <i class="fas fa-child me-2"></i>兒童姓名
+                                </label>
+                                <input type="text" class="form-control form-control-lg" id="name" name="name" 
+                                       placeholder="請輸入兒童姓名" required>
+                                <div class="invalid-feedback">
+                                    請輸入兒童姓名
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="birth_date" class="form-label">
+                                    <i class="fas fa-birthday-cake me-2"></i>出生日期
+                                </label>
+                                <input type="date" class="form-control form-control-lg" id="birth_date" name="birth_date" required>
+                                <div class="invalid-feedback">
+                                    請選擇出生日期
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="gender" class="form-label">
+                                    <i class="fas fa-venus-mars me-2"></i>性別
+                                </label>
+                                <select class="form-select form-select-lg" id="gender" name="gender" required>
+                                    <option value="">請選擇性別</option>
+                                    <option value="男">男</option>
+                                    <option value="女">女</option>
+                                </select>
+                                <div class="invalid-feedback">
+                                    請選擇性別
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="caregiver_id" class="form-label">
+                                    <i class="fas fa-user me-2"></i>照護者
+                                </label>
+                                <select class="form-select form-select-lg" id="caregiver_id" name="caregiver_id" required>
+                                    <option value="">請選擇照護者</option>
+                                    {% for caregiver in caregivers %}
+                                    <option value="{{ caregiver.id }}">{{ caregiver.username }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="invalid-feedback">
+                                    請選擇照護者
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-grid mt-4">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="fas fa-child me-2"></i>新增兒童資料
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 上傳聯評報告 -->
+<div class="row mb-5">
+    <div class="col-12">
+        <div class="card glass-effect">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-file-upload text-warning me-2"></i>上傳聯評報告
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('upload_report') }}" enctype="multipart/form-data" class="needs-validation" novalidate>
+                    <div class="row g-4">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="child_id" class="form-label">
+                                    <i class="fas fa-child me-2"></i>選擇兒童
+                                </label>
+                                <select class="form-select form-select-lg" id="child_id" name="child_id" required>
+                                    <option value="">請選擇兒童</option>
+                                    {% for child in children %}
+                                    <option value="{{ child.id }}">{{ child.name }} (照護者: {{ child.caregiver.username }})</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="invalid-feedback">
+                                    請選擇兒童
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="file" class="form-label">
+                                    <i class="fas fa-file-pdf me-2"></i>選擇PDF檔案
+                                </label>
+                                <input type="file" class="form-control form-control-lg" id="file" name="file" accept=".pdf" required>
+                                <div class="invalid-feedback">
+                                    請選擇PDF檔案
+                                </div>
+                                <div class="form-text">
+                                    <i class="fas fa-info-circle me-1"></i>僅支援PDF格式檔案
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-grid mt-4">
+                        <button type="submit" class="btn btn-warning btn-lg">
+                            <i class="fas fa-file-upload me-2"></i>上傳報告
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 兒童列表 -->
+<div class="row">
+    <div class="col-12">
+        <div class="card glass-effect">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-list text-info me-2"></i>兒童資料列表
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if children %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th><i class="fas fa-child me-2"></i>兒童姓名</th>
+                                <th><i class="fas fa-birthday-cake me-2"></i>出生日期</th>
+                                <th><i class="fas fa-venus-mars me-2"></i>性別</th>
+                                <th><i class="fas fa-user me-2"></i>照護者</th>
+                                <th><i class="fas fa-file-pdf me-2"></i>報告數量</th>
+                                <th><i class="fas fa-cogs me-2"></i>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for child in children %}
+                            <tr class="child-row">
+                                <td>
+                                    <div class="child-name">
+                                        <i class="fas fa-child text-primary me-2"></i>
+                                        <strong>{{ child.name }}</strong>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="badge bg-info">{{ child.birth_date }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge {% if child.gender == '男' %}bg-primary{% else %}bg-pink{% endif %}">
+                                        {{ child.gender }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="caregiver-info">
+                                        <i class="fas fa-user text-success me-1"></i>
+                                        {{ child.caregiver.username }}
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="badge bg-warning">
+                                        <i class="fas fa-file-pdf me-1"></i>
+                                        {{ child.reports|length }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('view_child_reports', child_id=child.id) }}" 
+                                       class="btn btn-sm btn-info">
+                                        <i class="fas fa-eye me-1"></i>查看報告
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="empty-state text-center py-5">
+                    <div class="empty-state-icon mb-4">
+                        <i class="fas fa-child text-muted fa-4x"></i>
+                    </div>
+                    <h5 class="mb-3">尚無兒童資料</h5>
+                    <p class="text-muted">請先新增兒童資料</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* 早療人員儀表板樣式 */
+.dashboard-header {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+    backdrop-filter: blur(20px);
+    border-radius: 20px;
+    padding: 2rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.dashboard-stats {
+    display: flex;
+    gap: 1rem;
+}
+
+.stat-card {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border-radius: 16px;
+    padding: 1.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    transition: all 0.3s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.stat-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(0, 122, 255, 0.1), rgba(175, 82, 222, 0.1));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+}
+
+.stat-content {
+    flex: 1;
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--apple-dark);
+    line-height: 1;
+}
+
+.stat-label {
+    font-size: 0.9rem;
+    color: var(--apple-gray);
+    font-weight: 500;
+}
+
+/* 表格樣式 */
+.child-row {
+    transition: all 0.3s ease;
+}
+
+.child-row:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateX(4px);
+}
+
+.child-name {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+}
+
+.caregiver-info {
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+.bg-pink {
+    background: linear-gradient(135deg, #FF2D92, #FF6B9D) !important;
+}
+
+/* 空狀態樣式 */
+.empty-state {
+    padding: 2rem;
+}
+
+.empty-state-icon {
+    color: var(--apple-gray);
+}
+
+/* 響應式設計 */
+@media (max-width: 768px) {
+    .dashboard-header {
+        padding: 1.5rem;
+    }
+    
+    .dashboard-stats {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .stat-card {
+        padding: 1rem;
+    }
+    
+    .table-responsive {
+        font-size: 0.9rem;
+    }
+}
+</style>
+{% endblock %}
