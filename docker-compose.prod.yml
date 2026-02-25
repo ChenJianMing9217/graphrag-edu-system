@@ -1,0 +1,7 @@
+services:
+  app:
+    container_name: graphrag_app_prod
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env.prod
