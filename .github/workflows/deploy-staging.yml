@@ -22,7 +22,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull and up (staging)
-        shell: pwsh
+        # shell: pwsh # use powershell on Windows
         run: |
           docker compose -p graphrag_staging -f docker-compose.yml -f docker-compose.staging.yml pull
           docker compose -p graphrag_staging -f docker-compose.yml -f docker-compose.staging.yml up -d
