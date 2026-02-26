@@ -1,6 +1,6 @@
 services:
   app:
-    container_name: graphrag_app_staging
+    image: ghcr.io/chenjianming9217/graphrag-edu-system:staging
     ports:
       - "5001:5000"
     env_file:

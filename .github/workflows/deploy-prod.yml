@@ -1,0 +1,14 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Deploy production
+        run: |
+          docker compose -p graphrag_prod -f docker-compose.yml -f docker-compose.prod.yml pull
+          docker compose -p graphrag_prod -f docker-compose.yml -f docker-compose.prod.yml up -d

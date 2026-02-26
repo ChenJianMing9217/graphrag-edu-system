@@ -1,6 +1,6 @@
 services:
   app:
-    container_name: graphrag_app_prod
+    image: ghcr.io/chenjianming9217/graphrag-edu-system:prod
     ports:
       - "5000:5000"
     env_file:

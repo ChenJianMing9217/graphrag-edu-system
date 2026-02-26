@@ -1,0 +1,15 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Pull latest staging image
+        run: |
+          docker compose -p graphrag_staging -f docker-compose.yml -f docker-compose.staging.yml pull
+          docker compose -p graphrag_staging -f docker-compose.yml -f docker-compose.staging.yml up -d
