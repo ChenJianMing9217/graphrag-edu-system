@@ -100,3 +100,33 @@ def encode_anchors(
         result[d] = [mat[i] for i in range(start_idx, end_idx)]
     
     return result
+
+
+def encode_overview_anchors(
+    encoder: TextEncoder,
+    overview_sentences: List[str],
+) -> List[np.ndarray]:
+    """
+    將「整體」錨點句子 encode 成向量列表。用於與使用者 query 做相似度比對（取代關鍵字判斷）。
+    建議在系統啟動時做一次並快取。
+    """
+    if not overview_sentences:
+        return []
+    texts = [(t or "").strip() for t in overview_sentences if (t or "").strip()]
+    if not texts:
+        return []
+    mat = encoder.encode_many(texts)
+    return [mat[i] for i in range(len(mat))]
+
+
+def score_overview_similarity(
+    query_vec: np.ndarray,
+    overview_anchor_vecs: List[np.ndarray],
+) -> float:
+    """
+    計算 query 向量與整體錨點向量的相似度，取最大值（Max Pooling）。
+    若 overview_anchor_vecs 為空，回傳 0.0。
+    """
+    if not overview_anchor_vecs:
+        return 0.0
+    return float(max(cosine_sim(query_vec, v) for v in overview_anchor_vecs))

@@ -27,10 +27,12 @@ class DialogueStateSnapshot:
     memory_dist: Dict[str, float] = None
     prev_dist: Dict[str, float] = None
     prev_raw_top_domain: Optional[str] = None
-    prev_active_domains: List[str] = None  # 新增
+    prev_active_domains: list = None  # 新增
     
-    # SemanticFlowClassifier 狀態
+    # SemanticFlowClassifier 狀態（Scope 沿用用）
     turn_index: int = 0
+    prev_scope: Optional[str] = None  # 上一輪的 scope_label
+    prev_was_overview: bool = False  # 上一輪是否為整體（供模糊+整體兩條規則）
     
     def __post_init__(self):
         if self.memory_dist is None:
@@ -80,7 +82,9 @@ def save_dialogue_state(
     context_sim: ContextSimilarity,
     topic_tracker: MultiTopicTracker,
     turn_index: int,
-    state_dir: str = "dialogue_states"
+    state_dir: str = "dialogue_states",
+    prev_scope: Optional[str] = None,
+    prev_was_overview: bool = False,
 ) -> bool:
     """
     保存對話狀態到文件
@@ -110,8 +114,10 @@ def save_dialogue_state(
             memory_dist=dict(topic_state.memory_dist),
             prev_dist=dict(topic_state.prev_dist),
             prev_raw_top_domain=topic_state.prev_raw_top_domain,
-            prev_active_domains=list(topic_state.prev_active_domains),  # 新增
+            prev_active_domains=list(topic_state.prev_active_domains),
             turn_index=turn_index,
+            prev_scope=prev_scope,
+            prev_was_overview=prev_was_overview,
         )
         
         filename = os.path.join(state_dir, f"user_{user_id}_child_{child_id}_state.json")
@@ -130,7 +136,7 @@ def load_dialogue_state(
     context_sim: ContextSimilarity,
     topic_tracker: MultiTopicTracker,
     state_dir: str = "dialogue_states"
-) -> Optional[int]:
+) -> Optional[tuple]:
     """
     從文件加載對話狀態
     
@@ -142,7 +148,7 @@ def load_dialogue_state(
         state_dir: 狀態文件保存目錄
     
     Returns:
-        恢復的 turn_index，如果失敗則返回 None
+        (turn_index, prev_scope, prev_was_overview) 或 None（失敗時）
     """
     try:
         filename = os.path.join(state_dir, f"user_{user_id}_child_{child_id}_state.json")
@@ -165,9 +171,11 @@ def load_dialogue_state(
         topic_tracker.state.memory_dist = dict(snapshot.memory_dist)
         topic_tracker.state.prev_dist = dict(snapshot.prev_dist)
         topic_tracker.state.prev_raw_top_domain = snapshot.prev_raw_top_domain
-        topic_tracker.state.prev_active_domains = list(snapshot.prev_active_domains)  # 新增
+        topic_tracker.state.prev_active_domains = list(snapshot.prev_active_domains)
         
-        return snapshot.turn_index
+        prev_scope = getattr(snapshot, "prev_scope", None)
+        prev_was_overview = getattr(snapshot, "prev_was_overview", False)
+        return (snapshot.turn_index, prev_scope, prev_was_overview)
     except Exception as e:
         print(f"[STATE] 加載狀態失敗 (user={user_id}, child={child_id}): {e}")
         return None

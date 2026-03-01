@@ -1,0 +1,15 @@
+{
+  "A": {"assessment": 0.45, "observation": 0.0, "training": 0.35, "suggestion": 0.20},
+  "B": {"assessment": 0.65, "observation": 0.35, "training": 0.0, "suggestion": 0.0},
+  "C": {"assessment": 0.55, "observation": 0.45, "training": 0.0, "suggestion": 0.0},
+  "D": {"assessment": 0.50, "observation": 0.30, "training": 0.20, "suggestion": 0.0},
+  "E": {"assessment": 0.0, "observation": 0.25, "training": 0.40, "suggestion": 0.35},
+  "F": {"assessment": 0.0, "observation": 0.30, "training": 0.35, "suggestion": 0.35},
+  "G": {"assessment": 0.45, "observation": 0.0, "training": 0.35, "suggestion": 0.20},
+  "H": {"assessment": 0.40, "observation": 0.0, "training": 0.35, "suggestion": 0.25},
+  "I": {"assessment": 0.55, "observation": 0.0, "training": 0.45, "suggestion": 0.0},
+  "J": {"assessment": 0.25, "observation": 0.35, "training": 0.20, "suggestion": 0.20},
+  "K": {"assessment": 0.55, "observation": 0.0, "training": 0.45, "suggestion": 0.0},
+  "L": {"assessment": 0.30, "observation": 0.0, "training": 0.45, "suggestion": 0.25},
+  "M": {"assessment": 0.0, "observation": 0.40, "training": 0.35, "suggestion": 0.25}
+}

@@ -38,24 +38,28 @@ class LLMGenerationConfig:
 class LLMPromptManager:
     """管理不同 DST + Task 組合的提示詞和參數"""
     
-    # Task 名稱映射（中文）
+    # Task A–M 名稱映射（中文，領域中性）
     TASK_NAME_ZH = {
-        "T1_report_overview": "報告導覽/摘要",
-        "T2_score_interpretation": "分數/量表解讀",
-        "T3_clinical_to_daily": "臨床描述轉日常",
-        "T4_prioritization": "能力剖面/優先順序",
-        "T5_coaching": "訓練教練/在家怎麼做",
-        "T6_decision_monitoring": "決策/追蹤與成效",
-        "T_meta": "行政/資源/隱私/溝通",
+        "A": "報告總覽與閱讀順序",
+        "B": "分數/量表/百分位解讀",
+        "C": "臨床觀察與表現解讀",
+        "D": "能力剖面（優勢/需求/優先順序）",
+        "E": "在家訓練怎麼做",
+        "F": "融入日常作息的練習",
+        "G": "是否需要早療/成效追蹤",
+        "H": "轉介與在地資源",
+        "I": "報告分享/隱私與安全",
+        "J": "與學校合作",
+        "K": "補助/福利/申請",
+        "L": "後續追蹤/再評估",
+        "M": "家長情緒支持與家庭協作",
     }
     
-    # Scope 名稱映射（中文）
+    # Scope 名稱映射（中文）：Scope 管「要檢索多少主題分支」
     SCOPE_NAME_ZH = {
-        "S1_overview": "整體概覽",
-        "S2_domain": "單領域",
-        "S3_subskill_context": "具體能力/情境",
-        "S4_bridging": "關聯/歸因",
-        "S5_meta": "非臨床/行政",
+        "S_overview": "Overview(整體)",
+        "S_domain": "Domain(單領域)",
+        "S_multi_domain": "Multi-Domain(多領域)",
     }
     
     def __init__(self):
@@ -177,56 +181,50 @@ class LLMPromptManager:
             )
     
     def _get_config_by_task(self, task_label: str, scope_label: Optional[str]) -> LLMGenerationConfig:
-        """根據 task 和 scope 獲取配置"""
+        """根據 task A–M 和 scope 獲取配置"""
         config = LLMGenerationConfig()
-        
-        # 根據 task 調整
-        if task_label == "T1_report_overview":
+        # A–M 依類型分組給 LLM 參數
+        if task_label == "A":
             config.temperature = 0.25
             config.max_tokens = 2500
             config.response_style = "comprehensive"
             config.max_context_items = 15
-        elif task_label == "T2_score_interpretation":
+        elif task_label in ("B", "C"):
             config.temperature = 0.2
             config.max_tokens = 2000
             config.response_style = "explanatory"
             config.include_caution = True
-        elif task_label == "T3_clinical_to_daily":
-            config.temperature = 0.2
-            config.max_tokens = 2000
-            config.response_style = "friendly"
-        elif task_label == "T4_prioritization":
+        elif task_label == "D":
             config.temperature = 0.2
             config.max_tokens = 2000
             config.response_style = "structured"
-        elif task_label == "T5_coaching":
+        elif task_label in ("E", "F"):
             config.temperature = 0.15
             config.max_tokens = 2000
             config.response_style = "step_by_step"
             config.max_context_items = 8
-        elif task_label == "T6_decision_monitoring":
+        elif task_label in ("G", "L"):
             config.temperature = 0.2
             config.max_tokens = 2000
             config.response_style = "professional"
-        elif task_label == "T_meta":
+        elif task_label in ("H", "I", "J", "K", "M"):
             config.temperature = 0.2
             config.max_tokens = 1500
             config.response_style = "concise"
+        else:
+            config.temperature = 0.2
+            config.max_tokens = 2000
+            config.response_style = "professional"
         
-        # 根據 scope 調整
-        if scope_label == "S1_overview":
+        # 根據 scope 調整（三類：整體 / 單領域 / 多領域）
+        if scope_label == "S_overview":
             config.max_tokens = max(config.max_tokens, 2500)
             config.response_style = "comprehensive"
-        elif scope_label == "S2_domain":
+        elif scope_label == "S_domain":
             config.max_tokens = max(config.max_tokens, 2000)
-        elif scope_label == "S3_subskill_context":
-            config.max_tokens = min(config.max_tokens, 1500)
-            config.response_style = "step_by_step" if task_label == "T5_coaching" else config.response_style
-        elif scope_label == "S4_bridging":
-            config.max_tokens = max(config.max_tokens, 2000)
-        elif scope_label == "S5_meta":
-            config.max_tokens = min(config.max_tokens, 1500)
-            config.response_style = "concise"
+        elif scope_label == "S_multi_domain":
+            config.max_tokens = max(config.max_tokens, 2200)
+            config.context_format_style = "structured"
         
         return config
     
@@ -317,37 +315,20 @@ class LLMPromptManager:
         base_prompt += "4. 如果檢索到的資訊涉及多個領域，優先回答與使用者問題最相關的領域。\n"
         base_prompt += "5. 如果對話歷史中有提及特定領域，請在回答中延續該領域的討論。\n\n"
         
-        # 根據 task 添加特定角色
+        # 根據 task A–M 添加特定角色
         if task_label:
             task_name = self.TASK_NAME_ZH.get(task_label, task_label)
-            if task_label == "T1_report_overview":
-                base_prompt += f"\n\n你的專長是「{task_name}」，能夠從評估報告中提取關鍵資訊並整合成清晰的概覽。"
-            elif task_label == "T2_score_interpretation":
-                base_prompt += f"\n\n你的專長是「{task_name}」，能夠用易懂的方式解釋評估分數的意義，並提供發展位置的參考。"
-            elif task_label == "T3_clinical_to_daily":
-                base_prompt += f"\n\n你的專長是「{task_name}」，能夠將臨床評估描述轉換為日常生活中的具體表現。"
-            elif task_label == "T4_prioritization":
-                base_prompt += f"\n\n你的專長是「{task_name}」，能夠分析能力剖面並提供優先順序建議。"
-            elif task_label == "T5_coaching":
-                base_prompt += f"\n\n你的專長是「{task_name}」，能夠提供具體、可操作的居家訓練步驟和活動建議。"
-            elif task_label == "T6_decision_monitoring":
-                base_prompt += f"\n\n你的專長是「{task_name}」，能夠協助制定追蹤計劃並評估成效。"
-            elif task_label == "T_meta":
-                base_prompt += f"\n\n你的專長是「{task_name}」，能夠提供實用的行政資訊和資源連結。"
+            base_prompt += f"\n\n你的專長是「{task_name}」，請根據使用者需求提供相應的專業建議與說明。"
         
-        # 根據 scope 添加範圍說明
+        # 根據 scope 添加範圍說明（三類：整體 / 單領域 / 多領域）
         if scope_label:
             scope_name = self.SCOPE_NAME_ZH.get(scope_label, scope_label)
-            if scope_label == "S1_overview":
-                base_prompt += f"\n\n本次查詢是關於「{scope_name}」，請提供全面但精簡的回答。"
-            elif scope_label == "S2_domain":
-                base_prompt += f"\n\n本次查詢聚焦於「{top_domain}」領域的「{scope_name}」，請針對該領域深入回答。"
-            elif scope_label == "S3_subskill_context":
-                base_prompt += f"\n\n本次查詢是關於「{scope_name}」，請提供具體、實用的回答。"
-            elif scope_label == "S4_bridging":
-                base_prompt += f"\n\n本次查詢是關於「{scope_name}」，請分析不同能力之間的關聯。"
-            elif scope_label == "S5_meta":
-                base_prompt += f"\n\n本次查詢是關於「{scope_name}」，請提供簡潔、實用的資訊。"
+            if scope_label == "S_overview":
+                base_prompt += f"\n\n本次查詢是「{scope_name}」，請整合多個領域的資訊，提供全面但結構化的回答。"
+            elif scope_label == "S_domain":
+                base_prompt += f"\n\n本次查詢聚焦「{scope_name}」（{top_domain}），請針對該領域深入回答。"
+            elif scope_label == "S_multi_domain":
+                base_prompt += f"\n\n本次查詢是「{scope_name}」，請分別針對各相關領域回答，必要時說明彼此關聯。"
         
         # 添加模糊度處理（重要：需要反問並引導）
         if is_ambiguous:

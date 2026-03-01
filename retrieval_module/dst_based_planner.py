@@ -99,9 +99,10 @@ class DSTBasedRetrievalPlanner:
             active_tasks, task_dist, reasons
         )
         
-        # 4. 根據 retrieval_action 決定 subdomain 範圍（優先使用 DST 提供的 active_domains）
-        # 注意：如果 entropy 很高，active_domains 已經調整為 prev_active_domains
+        # 4. 依 Scope 決定要檢索多少主題分支，再決定 subdomain 配額
+        # Scope: S_overview=整張圖, S_domain=單一領域, S_multi_domain=多個領域（再依 retrieval_action 細調）
         subdomain_quota = self._decide_subdomain_quota(
+            scope_pred,
             retrieval_action,
             domain_distribution,
             top_domain,
@@ -210,39 +211,17 @@ class DSTBasedRetrievalPlanner:
         reasons: List[str]
     ) -> List[str]:
         """
-        合併多個 tasks 對應的 use_sections
-        
-        Args:
-            active_tasks: 過門檻的 task labels
-            scope_pred: Scope 預測
-            reasons: 原因列表
-        
-        Returns:
-            List[str]: 合併後的 section types
+        合併多個 tasks 對應的 use_sections（Task A–M 由 ontology 權重 > 0 決定）
         """
         all_sections = ["assessment", "observation", "training", "suggestion"]
         use_sections = set()
-        
-        # 根據每個 task 添加對應的 sections
         for task in active_tasks:
-            if task == "T5_coaching":
-                use_sections.update(["training", "suggestion"])
-            elif task == "T3_clinical_to_daily":
-                use_sections.update(["observation"])
-            elif task == "T2_score_interpretation":
-                use_sections.update(["assessment"])
-            # T1_report_overview 和其他 tasks 預設使用所有 sections
-            else:
-                use_sections.update(all_sections)
-        
-        # Scope 也會影響
-        if scope_pred == "S3_subskill_context":
-            use_sections.update(["training", "suggestion"])
-        
-        # 如果沒有任何 task 或都未匹配，預設使用所有 sections
+            weights = self.ontology.get_section_weights(task)
+            for sec, w in weights.items():
+                if w and float(w) > 0:
+                    use_sections.add(sec)
         if not use_sections:
             use_sections = set(all_sections)
-        
         result = sorted(list(use_sections))
         reasons.append(f"merged use_sections: {result}")
         return result
@@ -305,30 +284,58 @@ class DSTBasedRetrievalPlanner:
     
     def _decide_subdomain_quota(
         self,
+        scope_pred: str,
         retrieval_action: str,
         domain_distribution: Dict[str, float],
         top_domain: str,
         top_domain_prob: float,
-        active_domains: List[str],  # 新增：DST 提供的本輪活躍領域
-        prev_active_domains: List[str],  # 新增：DST 提供的上一輪活躍領域
+        active_domains: List[str],  # DST 提供的本輪活躍領域
+        prev_active_domains: List[str],  # 上一輪的活躍領域
         retrieval_state: RetrievalState,
         reasons: List[str]
     ) -> Dict[str, int]:
         """
-        根據 retrieval_action 決定 subdomain 範圍並分配 quota
-        
-        Args:
-            retrieval_action: DST 的檢索動作
-            domain_distribution: Subdomain 機率分布
-            top_domain: 頂級 subdomain
-            top_domain_prob: 頂級 subdomain 的機率
-            retrieval_state: 檢索狀態
-            reasons: 原因列表
-        
-        Returns:
-            Dict[str, int]: Subdomain quota 分配，例如 {"粗大動作": 6, "精細動作": 4}
+        依 Scope 決定要檢索多少主題分支，再分配 subdomain quota。
+        - S_overview: 整張圖（全部領域均分或略加權）
+        - S_domain: 單一領域（全部配額給該領域）
+        - S_multi_domain: 多個領域（依 retrieval_action 細調後分配）
         """
-        # 過濾極小機率
+        # S_overview：查整張圖，使用全部主題
+        if scope_pred == "S_overview":
+            all_topics = list(self.ontology.TOPIC_LABELS)
+            if not all_topics:
+                reasons.append("S_overview: ontology.TOPIC_LABELS 為空，fallback 使用 domain_distribution")
+                all_topics = list(domain_distribution.keys())[:10] if domain_distribution else []
+            if not all_topics:
+                return {}
+            # 分布：優先用 domain_distribution，缺的用均勻
+            n = len(all_topics)
+            dist = {
+                t: domain_distribution.get(t, 1.0 / n)
+                for t in all_topics
+            }
+            total = sum(dist.values())
+            if total > 0:
+                dist = {t: v / total for t, v in dist.items()}
+            reasons.append(f"S_overview: 檢索整張圖，共 {len(all_topics)} 個主題")
+            return self._allocate_subdomain_quota(all_topics, dist, reasons)
+
+        # S_domain：單一領域，全部配額給該領域
+        # 模糊沿用時 active_domains 已改為 prev_active_domains，應優先使用以檢索「延續的領域」
+        if scope_pred == "S_domain":
+            single = (active_domains[0] if active_domains else "") or top_domain
+            if not single and domain_distribution:
+                single = max(domain_distribution.items(), key=lambda x: x[1])[0]
+            if single:
+                reasons.append(f"S_domain: 單一領域檢索 {single}")
+                return {single: TOTAL_K}
+            reasons.append("S_domain: 無可用的單一領域，fallback 使用 active_domains 或 top_domain")
+            if active_domains:
+                return {active_domains[0]: TOTAL_K}
+            return {}
+
+        # S_multi_domain 或未知 scope：依 retrieval_action 決定 subdomain 範圍
+        reasons.append(f"scope_pred={scope_pred}，依 retrieval_action 決定 subdomain 範圍")
         filtered_dist = {
             subdomain: prob
             for subdomain, prob in domain_distribution.items()
@@ -336,13 +343,11 @@ class DSTBasedRetrievalPlanner:
         }
         
         if not filtered_dist:
-            # Fallback: 使用 top_domain
             if top_domain:
                 reasons.append(f"fallback: 使用 top_domain={top_domain}")
                 return {top_domain: TOTAL_K}
             return {}
         
-        # 根據 retrieval_action 決定 subdomain 範圍（優先使用 DST 提供的 active_domains）
         if retrieval_action == "NARROW_GRAPH":
             # NARROW_GRAPH: 使用上一輪和本輪的交集
             subdomains = self._narrow_graph_subdomains(

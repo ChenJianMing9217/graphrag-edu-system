@@ -13,7 +13,7 @@ class LLMConfig:
     """LLM 基礎配置（API 相關）"""
     base_url: str = "https://task-wise-medieval-generated.trycloudflare.com/v1" #暫用cloudflare的代理
     api_key: str = "lm-studio"
-    model: str = "qwen2.5-7b-instruct"
+    model: str = "qwen2.5-14b-instruct"
 
 
 class LLMGenerator:

@@ -1,8 +1,14 @@
 # 定義各領域及其對應的 anchor，用於 dialogue state tracking 中的 domain routing。
 
 from __future__ import annotations
+import os
+import json
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+
+# 預設設定檔路徑（dialogue_state_module/config/domain_anchors.json）
+_CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
+DEFAULT_DOMAIN_ANCHORS_JSON_PATH = os.path.join(_CONFIG_DIR, "domain_anchors.json")
 
 # 所有領域（順序固定有助於 debug / print）
 DOMAINS: List[str] = [
@@ -16,6 +22,16 @@ DOMAINS: List[str] = [
     "口語表達",
     "說話",
     "認知功能",
+]
+
+# 整體／概覽意圖的 anchor（用於向量比對，判斷是否為「整體查詢」，不用關鍵字）
+# 語意涵蓋：整份報告、全部領域、概覽、總結、從頭到尾的狀況
+OVERVIEW_ANCHORS: List[str] = [
+    "整體的狀況、整份報告的概覽、全部領域的總結",
+    "評估了哪些領域、有哪些項目、整體發展如何",
+    "從頭到尾的狀況、全部一起看、整體表現",
+    "整份評估報告的內容、各領域的整體狀況",
+    "整體評估結果、整體發展、整體來看",
 ]
 
 # 每個領域的 anchor（用來做 domain routing 的語意對齊）
@@ -42,6 +58,7 @@ DOMAIN_ANCHORS: Dict[str, List[str]] = {
         "孩子走路不穩怎麼辦？如何訓練平衡能力？",
         "孩子還不會爬行或走路，需要做物理治療嗎？",
         "如何在家訓練孩子的粗大動作能力？"
+        "皮巴迪動作發展量表（PDMS）"
     ],
     
     "精細動作": [
@@ -54,6 +71,7 @@ DOMAIN_ANCHORS: Dict[str, List[str]] = {
         "孩子不會拿筆寫字怎麼辦？如何訓練手部功能？",
         "孩子不會扣鈕扣、拉拉鍊，需要做職能治療嗎？",
         "如何在家訓練孩子的精細動作？"
+        "皮巴迪動作發展量表（PDMS）"
     ],
     
     "感覺統合": [
@@ -152,6 +170,31 @@ DOMAIN_ANCHORS: Dict[str, List[str]] = {
         "如何提升孩子的認知能力和問題解決能力？"
     ],
 }
+
+
+def load_domain_anchors(
+    config_path: Optional[str] = None,
+) -> Tuple[List[str], List[str], Dict[str, List[str]]]:
+    """
+    從 JSON 載入領域與錨點（domains, overview_anchors, domain_anchors）。
+    若 config_path 為 None 則使用預設路徑；讀檔失敗或格式錯誤則回傳程式內建預設。
+    """
+    path = config_path or DEFAULT_DOMAIN_ANCHORS_JSON_PATH
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        domains = list(data.get("domains") or [])
+        overview_anchors = list(data.get("overview_anchors") or [])
+        raw = data.get("domain_anchors") or {}
+        domain_anchors = {k: list(v) for k, v in raw.items() if isinstance(v, list)}
+        if not domains or not domain_anchors:
+            return (DOMAINS, OVERVIEW_ANCHORS, DOMAIN_ANCHORS)
+        if not overview_anchors:
+            overview_anchors = OVERVIEW_ANCHORS
+        return (domains, overview_anchors, domain_anchors)
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return (DOMAINS, OVERVIEW_ANCHORS, DOMAIN_ANCHORS)
+
 
 @dataclass(frozen=True) # frozen: 不可變
 class DomainConfig:

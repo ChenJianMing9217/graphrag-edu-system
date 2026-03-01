@@ -12,10 +12,10 @@ import numpy as np
 from create_graph_module.process_pdf_to_graph import process_pdf_to_graph
 
 # 導入對話狀態模組
-from dialogue_state_module.embedding import TextEncoder, EncoderConfig, encode_anchors
+from dialogue_state_module.embedding import TextEncoder, EncoderConfig, encode_anchors, encode_overview_anchors
 from dialogue_state_module.domain_router import DomainRouter, DomainRouterConfig
 from dialogue_state_module.semantic_flow_module_v2 import SemanticFlowClassifier
-from dialogue_state_module.domain_anchors import DOMAIN_ANCHORS, DOMAINS
+from dialogue_state_module.domain_anchors import load_domain_anchors
 from dialogue_state_module.task_scope_classifier import TaskScopeClassifier
 
 
@@ -112,6 +112,7 @@ class ChatMessage(db.Model):
 _shared_encoder = None  # TextEncoder - shared across all users (expensive to load)
 _shared_domain_router = None  # DomainRouter - shared and stateless
 _shared_anchor_vecs = None  # Cached anchor vectors
+_shared_overview_anchor_vecs = None  # 整體意圖錨點向量（用於向量比、不用關鍵字）
 _shared_task_scope_clf = None  # TaskScopeClassifier - shared across all users
 _user_classifiers = {}  # key: (user_id, child_id) -> SemanticFlowClassifier instance
 
@@ -125,7 +126,7 @@ def init_dst_components():
     TextEncoder and DomainRouter are expensive to load, so we load them once
     and reuse across all users.
     """
-    global _shared_encoder, _shared_domain_router, _shared_anchor_vecs, _shared_task_scope_clf
+    global _shared_encoder, _shared_domain_router, _shared_anchor_vecs, _shared_overview_anchor_vecs, _shared_task_scope_clf
     
     if _shared_encoder is not None:
         return  # Already initialized
@@ -139,13 +140,18 @@ def init_dst_components():
         
         print("[DST] TextEncoder 已初始化（自動加載 BGE 模型）")
         
-        # Compute anchor vectors for all domains
+        # Compute anchor vectors for all domains（從設定檔載入，失敗則用程式內建）
+        _domains, _overview_anchors, _domain_anchors = load_domain_anchors()
         domain_cfg = DomainRouterConfig()
-        _shared_anchor_vecs = encode_anchors(_shared_encoder, DOMAIN_ANCHORS, DOMAINS)
+        _shared_anchor_vecs = encode_anchors(_shared_encoder, _domain_anchors, _domains)
         print("[DST] 域錨向量已計算")
         
+        # 整體意圖錨點向量（用於向量比對判定整體，取代關鍵字）
+        _shared_overview_anchor_vecs = encode_overview_anchors(_shared_encoder, _overview_anchors)
+        print("[DST] 整體錨點向量已計算")
+        
         # Initialize DomainRouter (stateless, references shared encoder)
-        _shared_domain_router = DomainRouter(_shared_encoder, DOMAINS, _shared_anchor_vecs, domain_cfg)
+        _shared_domain_router = DomainRouter(_shared_encoder, _domains, _shared_anchor_vecs, domain_cfg)
         print("[DST] DomainRouter 已初始化")
         
         # Initialize TaskScopeClassifier (shared, uses same encoder)
@@ -171,7 +177,7 @@ def get_dialogue_classifier(user_id: int, child_id: int) -> SemanticFlowClassifi
     Returns:
         SemanticFlowClassifier instance
     """
-    global _user_classifiers, _shared_encoder, _shared_domain_router, _shared_task_scope_clf
+    global _user_classifiers, _shared_encoder, _shared_domain_router, _shared_task_scope_clf, _shared_overview_anchor_vecs
     
     if _shared_encoder is None:
         raise RuntimeError("DST components not initialized. Call init_dst_components() first.")
@@ -187,7 +193,9 @@ def get_dialogue_classifier(user_id: int, child_id: int) -> SemanticFlowClassifi
             topic_tracker=None,  # Will be created internally
             policy_cfg=None,  # Will use default config
             enable_task_scope=True,  # 啟用任務/範圍分類
-            task_scope_clf=_shared_task_scope_clf  # 使用共用的 TaskScopeClassifier
+            task_scope_clf=_shared_task_scope_clf,  # 使用共用的 TaskScopeClassifier
+            overview_anchor_vecs=_shared_overview_anchor_vecs,
+            overview_sim_threshold=0.63,  # 整體意圖向量相似度門檻（僅在模糊時使用）
         )
         _user_classifiers[key] = classifier
         
@@ -1400,7 +1408,7 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         print("=" * 60)
-        print("早療系統 (app_v5, 含對話狀態追蹤) 啟動中...")
+        print("早療系統啟動中...")
         print("=" * 60)
         try:
             # 初始化對話狀態追蹤模組（TextEncoder 會自動加載 BGE 模型）

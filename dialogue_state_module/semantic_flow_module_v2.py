@@ -6,8 +6,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 import json
+import numpy as np
 
-from .embedding import TextEncoder
+from .embedding import TextEncoder, score_overview_similarity
 from .domain_router import DomainRouter, DomainResult
 from .context_similarity import ContextSimilarity, ContextSimConfig
 from .multi_topic_tracker import MultiTopicTracker, MultiTopicConfig
@@ -193,6 +194,8 @@ class SemanticFlowClassifier:
         policy_cfg: Optional[DSTPolicyConfig] = None,
         enable_task_scope: bool = False,
         task_scope_clf: TaskScopeClassifier = None,
+        overview_anchor_vecs: Optional[List[np.ndarray]] = None,
+        overview_sim_threshold: float = 0.5,
     ):
         """
         初始化語義流程分類器
@@ -205,6 +208,8 @@ class SemanticFlowClassifier:
             policy_cfg: 策略配置 (可選，使用預設配置)
             enable_task_scope: 是否啟用任務/範圍分類
             task_scope_clf: 任務/範圍分類器 (如果 enable_task_scope=True 需提供)
+            overview_anchor_vecs: 整體意圖錨點向量列表（用於向量比對，取代關鍵字）
+            overview_sim_threshold: 整體意圖相似度門檻
         """
         self.text_encoder = text_encoder
         self.domain_router = domain_router
@@ -219,6 +224,12 @@ class SemanticFlowClassifier:
 
         # 狀態追蹤
         self.turn_index = 0
+        self._prev_scope: Optional[str] = None  # 上一輪 Scope（供模糊沿用與持久化）
+        self._prev_was_overview: bool = False  # 上一輪是否為整體（供模糊+整體兩條規則）
+
+        # 整體意圖：向量比對（不用關鍵字）
+        self._overview_anchor_vecs = overview_anchor_vecs if overview_anchor_vecs else []
+        self._overview_sim_threshold = overview_sim_threshold
 
         # 任務/範圍分類
         self.enable_task_scope = enable_task_scope
@@ -227,6 +238,8 @@ class SemanticFlowClassifier:
     def reset(self) -> None:
         """重置對話狀態"""
         self.turn_index = 0
+        self._prev_scope = None
+        self._prev_was_overview = False
         self.context_similarity.reset()
         self.topic_tracker.reset()
     
@@ -249,7 +262,9 @@ class SemanticFlowClassifier:
                 self.context_similarity,
                 self.topic_tracker,
                 self.turn_index,
-                state_dir
+                state_dir,
+                prev_scope=self._prev_scope,
+                prev_was_overview=self._prev_was_overview,
             )
         except Exception as e:
             print(f"[DST] 保存狀態失敗: {e}")
@@ -269,14 +284,16 @@ class SemanticFlowClassifier:
         """
         try:
             from .state_persistence import load_dialogue_state
-            turn_idx = load_dialogue_state(
+            result = load_dialogue_state(
                 user_id, child_id,
                 self.context_similarity,
                 self.topic_tracker,
                 state_dir
             )
-            if turn_idx is not None:
-                self.turn_index = turn_idx
+            if result is not None:
+                self.turn_index = result[0]
+                self._prev_scope = result[1]
+                self._prev_was_overview = result[2] if len(result) > 2 else False
                 return True
             return False
         except Exception as e:
@@ -459,35 +476,49 @@ class SemanticFlowClassifier:
         adjusted_topic_overlap = topic.overlap_score
         fused_distribution = None  # 記錄融合後的分布（若有）
         
-        # 檢測整體查詢
-        try:
-            from retrieval_module.task_scope_classifier_helper import is_overview_intent
-            is_overview_query = is_overview_intent(user_query)
-        except ImportError:
-            # Fallback：簡單實現
-            overview_keywords = ["整體", "概覽", "總結", "全部", "整份", "有哪些領域", "評估了哪些"]
-            is_overview_query = any(kw in user_query for kw in overview_keywords)
+        # 是否模糊（需先算，整體僅在「模糊」時才依向量／上一輪整體判定）
+        is_ambiguous = self.policy_cfg.enable_ambiguous_continuation and (domain.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th)
         
-        # 標記整體查詢
-        domain.is_overview_query = is_overview_query
-        
-        # 如果整體查詢，生成整體領域分布
+        # 整體查詢：僅當「模糊」且（向量像整體 或 上一輪是整體）才判為整體
+        overview_sim = 0.0
+        if self._overview_anchor_vecs:
+            query_vec = self.text_encoder.encode(user_query)
+            overview_sim = score_overview_similarity(query_vec, self._overview_anchor_vecs)
+        is_overview_by_vector = overview_sim >= self._overview_sim_threshold
+        is_overview_query = is_ambiguous and (is_overview_by_vector or self._prev_was_overview)
         if is_overview_query:
-            # 使用所有領域均勻分布策略（所有領域都要看）
+            print(f"  [整體查詢] 模糊且(向量像整體或上輪整體) → 判定為整體 (ambiguous={is_ambiguous}, sim={overview_sim:.3f}, prev_was_overview={self._prev_was_overview})")
+        
+        domain.is_overview_query = is_overview_query
+        overview_dist = None  # 需要時再算
+        
+        # 若本輪為整體或需沿用整體：生成整體領域分布
+        if is_overview_query or (self.policy_cfg.enable_ambiguous_continuation and domain.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th and self._prev_was_overview):
             overview_dist = self._get_overview_distribution(domain, strategy="all")
             domain.overview_distribution = overview_dist
-            print(f"  [整體查詢] 檢測到整體查詢")
-            print(f"    - 所有領域: {self._get_all_domains()}")
-            print(f"    - 記憶領域: {list(self._get_memory_domains().keys())}")
-            print(f"    - 當前活躍領域: {domain.active_domains}")
-            print(f"    - 整體分布 top5: {sorted(overview_dist.items(), key=lambda x: x[1], reverse=True)[:5]}")
+            if is_overview_query:
+                print(f"  [整體查詢] 整體分布 top5: {sorted(overview_dist.items(), key=lambda x: x[1], reverse=True)[:5]}")
         
-        # 模糊延續邏輯：如果模糊且上一輪領域存在，直接回退到上一輪分布
-        # 注意：整體查詢時跳過模糊延續
-        # 簡化版：只用 entropy 判斷模糊度，只要模糊就直接回退，不檢查 top domain 是否相同
-        if self.policy_cfg.enable_ambiguous_continuation and not is_overview_query:
-            is_ambiguous = domain.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th
-            
+        # 規則 A：模糊且整體且上一輪不是整體 → 整體、清除記憶、新對話
+        if is_ambiguous and is_overview_query and not self._prev_was_overview:
+            domain.is_overview_query = True
+            if domain.overview_distribution is None:
+                domain.overview_distribution = self._get_overview_distribution(domain, strategy="all")
+            fused_distribution = dict(domain.overview_distribution)
+            domain.fused_distribution = fused_distribution
+            self.topic_tracker.reset()
+            print(f"  [整體查詢] 規則A：模糊+整體，清除記憶、啟用新對話")
+            # 跳過下方一般模糊延續，直接到決策與 fused 寫入
+        # 規則 B：模糊且上一輪是整體 → 整體、有記憶（沿用整體分布）
+        elif is_ambiguous and self._prev_was_overview:
+            domain.is_overview_query = True
+            if domain.overview_distribution is None:
+                domain.overview_distribution = self._get_overview_distribution(domain, strategy="all")
+            fused_distribution = dict(domain.overview_distribution)
+            domain.fused_distribution = fused_distribution
+            print(f"  [整體查詢] 規則B：模糊+上一輪整體，判定為整體、有記憶")
+        # 一般模糊延續：模糊且上一輪有領域、非整體情境
+        elif self.policy_cfg.enable_ambiguous_continuation and not is_overview_query:
             # 使用 topic.prev_top_domain（這是更新前的值，真正的上一輪領域）
             # 而不是 self.topic_tracker.state.prev_raw_top_domain（已經被更新為當前輪）
             prev_top_domain = topic.prev_top_domain
@@ -598,23 +629,59 @@ class SemanticFlowClassifier:
             semantic_flow=semantic_flow,
         )
 
-    def _classify_task_scope(self, user_query: str) -> tuple:
-        """任務/範圍分類"""
+    def _classify_scope(
+        self,
+        domain_analysis: DomainAnalysis,
+        user_query: str,
+    ) -> tuple:
+        """
+        依規則分類 Scope（要檢索多少主題分支）。
+        特殊處理：
+        1. 若發生領域模糊觸發對話沿用（fused_distribution 已設）→ Scope 沿用上一輪。
+        2. 若首輪且本輪模糊（entropy 高）→ 預設「整體」。
+        否則：
+        - S_overview: 整體查詢 → 查整張圖
+        - S_multi_domain: 多領域 → 查多個特定領域
+        - S_domain: 單領域 → 查單一領域
+        """
+        # 1. 本輪為整體查詢（向量比或規則 A/B）→ 先判整體
+        if domain_analysis.is_overview_query:
+            label = "S_overview"
+            dist = {label: 1.0}
+            return label, dist
+
+        # 2. 模糊沿用：已觸發沿用則 Scope 沿用上一輪
+        if domain_analysis.fused_distribution is not None:
+            label = self._prev_scope or "S_overview"
+            dist = {label: 1.0}
+            return label, dist
+
+        # 3. 首輪且模糊：無上一輪可沿用，預設整體
+        if self.turn_index == 0 and domain_analysis.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th:
+            label = "S_overview"
+            dist = {label: 1.0}
+            return label, dist
+
+        # 4. 一般規則
+        if len(domain_analysis.active_domains) >= 2:
+            label = "S_multi_domain"
+        else:
+            label = "S_domain"
+        dist = {label: 1.0}
+        return label, dist
+
+    def _classify_task_only(self, user_query: str) -> tuple:
+        """僅做 Task 分類（Scope 改由規則 _classify_scope 決定）"""
         if not self.enable_task_scope:
-            return None, None, None, None
+            return None, None
         
         try:
             task_result = self.task_scope_clf.predict_task(user_query)
-            scope_result = self.task_scope_clf.predict_scope(user_query)
-            
             task_label = task_result.label if hasattr(task_result, "label") else str(task_result)
             task_dist = task_result.dist if hasattr(task_result, "dist") else None
-            scope_label = scope_result.label if hasattr(scope_result, "label") else str(scope_result)
-            scope_dist = scope_result.dist if hasattr(scope_result, "dist") else None
-            
-            return task_label, task_dist, scope_label, scope_dist
+            return task_label, task_dist
         except Exception:
-            return None, None, None, None
+            return None, None
 
     def predict(
         self,
@@ -644,8 +711,9 @@ class SemanticFlowClassifier:
         )
         policy = self._decide_policy(domain, context, topic, user_query)  # 傳遞 user_query
 
-        # 任務/範圍分類
-        task_label, task_dist, scope_label, scope_dist = self._classify_task_scope(user_query)
+        # Task 分類（分類器）；Scope 分類（規則：整體/單領域/多領域）
+        task_label, task_dist = self._classify_task_only(user_query)
+        scope_label, scope_dist = self._classify_scope(domain, user_query)
 
         # 構建結果
         result = FlowResult(
@@ -659,6 +727,10 @@ class SemanticFlowClassifier:
             scope_label=scope_label,
             scope_dist=scope_dist,
         )
+
+        # 供下一輪 Scope 沿用與持久化
+        self._prev_scope = scope_label
+        self._prev_was_overview = (scope_label == "S_overview")
 
         # 更新記憶狀態
         if assistant_reply is None:

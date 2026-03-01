@@ -5,8 +5,45 @@ topic_ontology.py
 通用主題本體配置（domain-agnostic）
 """
 
+import os
+import json
 from typing import Dict, List, Set, Optional
 from dataclasses import dataclass, field
+
+# 預設權重檔路徑（retrieval_module/config/task_section_weights.json）
+_CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
+DEFAULT_WEIGHTS_JSON_PATH = os.path.join(_CONFIG_DIR, "task_section_weights.json")
+
+DEFAULT_TASK_TO_SECTION_WEIGHTS: Dict[str, Dict[str, float]] = {
+    "A": {"assessment": 0.45, "observation": 0.0,  "training": 0.35, "suggestion": 0.20},
+    "B": {"assessment": 0.65, "observation": 0.35, "training": 0.0,  "suggestion": 0.0},
+    "C": {"assessment": 0.55, "observation": 0.45, "training": 0.0,  "suggestion": 0.0},
+    "D": {"assessment": 0.50, "observation": 0.30, "training": 0.20, "suggestion": 0.0},
+    "E": {"assessment": 0.0,  "observation": 0.25, "training": 0.40, "suggestion": 0.35},
+    "F": {"assessment": 0.0,  "observation": 0.30, "training": 0.35, "suggestion": 0.35},
+    "G": {"assessment": 0.45, "observation": 0.0,  "training": 0.35, "suggestion": 0.20},
+    "H": {"assessment": 0.40, "observation": 0.0,  "training": 0.35, "suggestion": 0.25},
+    "I": {"assessment": 0.55, "observation": 0.0,  "training": 0.45, "suggestion": 0.0},
+    "J": {"assessment": 0.25, "observation": 0.35, "training": 0.20, "suggestion": 0.20},
+    "K": {"assessment": 0.55, "observation": 0.0,  "training": 0.45, "suggestion": 0.0},
+    "L": {"assessment": 0.30, "observation": 0.0,  "training": 0.45, "suggestion": 0.25},
+    "M": {"assessment": 0.0,  "observation": 0.40, "training": 0.35, "suggestion": 0.25},
+}
+
+
+def load_task_section_weights(weights_path: Optional[str] = None) -> Dict[str, Dict[str, float]]:
+    """
+    從 JSON 載入 Task -> Section 權重。若路徑為 None 或讀檔失敗則回傳內建預設。
+    """
+    path = weights_path or DEFAULT_WEIGHTS_JSON_PATH
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return DEFAULT_TASK_TO_SECTION_WEIGHTS
+        return {k: dict(v) for k, v in data.items() if isinstance(v, dict)}
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return DEFAULT_TASK_TO_SECTION_WEIGHTS
 
 
 @dataclass
@@ -43,53 +80,17 @@ class TopicOntology:
         "行為": "情緒行為與社會適應功能"
     })
     
-    # Task 到 Section Type 的權重映射
-    # task: 使用者意圖類別（coaching/how-to, status/summary, definition, comparison, overview 等）
-    # section_type: 文件段落類型（assessment, observation, training, suggestion 等）
-    TASK_TO_SECTION_WEIGHTS: Dict[str, Dict[str, float]] = field(default_factory=lambda: {
-        "T1_report_overview": {
-            "assessment": 0.3,
-            "observation": 0.3,
-            "training": 0.2,
-            "suggestion": 0.2
-        },
-        "T2_score_interpretation": {
-            "assessment": 0.7,
-            "observation": 0.2,
-            "training": 0.05,
-            "suggestion": 0.05
-        },
-        "T3_definition": {
-            "assessment": 0.4,
-            "observation": 0.3,
-            "training": 0.15,
-            "suggestion": 0.15
-        },
-        "T4_prioritization": {
-            "assessment": 0.4,
-            "observation": 0.2,
-            "training": 0.2,
-            "suggestion": 0.2
-        },
-        "T5_coaching": {
-            "training": 0.5,
-            "suggestion": 0.3,
-            "assessment": 0.1,
-            "observation": 0.1
-        },
-        "T6_comparison": {
-            "assessment": 0.4,
-            "observation": 0.3,
-            "training": 0.15,
-            "suggestion": 0.15
-        },
-        "T_meta": {
-            "assessment": 0.25,
-            "observation": 0.25,
-            "training": 0.25,
-            "suggestion": 0.25
-        }
-    })
+    # Task A–M 到 Section Type 的權重映射（依使用資料優先順序）
+    # section_type: assessment=評估結果, observation=行為觀察, training=訓練方向, suggestion=具體建議
+    TASK_TO_SECTION_WEIGHTS: Dict[str, Dict[str, float]] = field(default_factory=lambda: DEFAULT_TASK_TO_SECTION_WEIGHTS.copy())
+    # 若提供權重檔路徑，建構時會從檔案載入並覆寫 TASK_TO_SECTION_WEIGHTS
+    weights_path: Optional[str] = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.weights_path:
+            loaded = load_task_section_weights(self.weights_path)
+            if loaded:
+                object.__setattr__(self, "TASK_TO_SECTION_WEIGHTS", loaded)
     
     # Policy 超參數
     MAX_TOPICS: int = 4  # 最多同時檢索的主題數
@@ -145,5 +146,5 @@ class TopicOntology:
         return {sec: 1.0 / len(default_sections) for sec in default_sections}
 
 
-# 預設實例（可替換）
-default_ontology = TopicOntology()
+# 預設實例（可替換；未傳 weights_path 時使用預設權重檔路徑，讀檔失敗則用內建權重）
+default_ontology = TopicOntology(weights_path=DEFAULT_WEIGHTS_JSON_PATH)
