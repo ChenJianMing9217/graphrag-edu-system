@@ -111,10 +111,6 @@ class LLMGenerator:
             
             # 提取回應內容
             generated_text = response.choices[0].message.content.strip()
-            
-            # 後處理：移除井號標題符號（#、##、###、#### 等）
-            generated_text = self._remove_markdown_headers(generated_text)
-            
             return generated_text
         
         except Exception as e:

@@ -1,618 +1,413 @@
-## 專案對話系統總覽
+## 對話狀態與策略 README（Dialogue State & Policy）
 
-本專案的核心是一套「以對話狀態追蹤（DST, Dialogue State Tracking）為中心」的問答系統，用來協助家長與治療師根據兒童的早療評估報告進行互動詢問。  
-對話流程大致可分為四層：
+本文件說明本專案中「對話狀態追蹤（DST）」與「策略決策（Policy）」的設計與運作方式，主要涵蓋：
 
-1. **對話入口與請求驗證**：Flask API `/api/chat`
-2. **對話狀態追蹤（DST）**：領域判斷、上下文相似度、主題延續、策略決策
-3. **檢索規劃與執行**：基於 DST 的檢索策略從 Neo4j 知識圖譜抓取相關內容
-4. **LLM 回應生成**：依 DST＋檢索結果動態調整提示詞與生成參數，並附上引用頁碼
-
----
-
-## 一、整體對話資料流
-
-1. **前端呼叫 `/api/chat`**
-   - 傳入：
-     - `message`: 使用者輸入文字
-     - `child_id`: 該對話對應的兒童
-   - 後端會檢查：
-     - 使用者是否登入
-     - `child_id` 是否存在且屬於目前登入者（照護者或治療師）
-
-2. **取得 / 建立對話分類器**
-   - 透過 `get_dialogue_classifier(current_user.id, child_id)`：
-     - 共用全域的：
-       - `TextEncoder`（BGE-M3）
-       - `DomainRouter`
-       - `TaskScopeClassifier`
-     - 每一組 `(user_id, child_id)` 會有自己的 `SemanticFlowClassifier` 實例：
-       - 內含 `ContextSimilarity`（上下文相似度）
-       - 內含 `MultiTopicTracker`（主題記憶）
-     - 啟動時會嘗試從檔案載入既有對話狀態（如存在）。
-
-3. **DST 分析（`SemanticFlowClassifier.predict`）**
-   - 對目前這一輪 user message 執行：
-     - **領域分析（DomainAnalysis）**
-     - **上下文相似度分析（ContextAnalysis）**
-     - **主題延續分析（TopicAnalysis）**
-     - **策略決策（PolicyDecision）**
-     - **Task / Scope 分類（TaskScopeClassifier）**
-   - 結果封裝在 `FlowResult`，同時更新內部記憶與 `turn_index`。
-
-4. **根據 DST 構建 `turn_state`**
-   - 自 `FlowResult` 抽取：
-     - `retrieval_action`
-     - `domain_distribution`（可能是原始分布、模糊融合分布或整體分布）
-     - `task_dist`、`task_pred`
-     - `scope_pred`
-     - `semantic_flow`
-     - `top_domain`、`top_domain_prob`
-     - `topic_overlap`
-     - `is_ambiguous`
-     - `normalized_entropy`
-     - DST 提供的 `active_domains`、`prev_active_domains`
-
-5. **檢索規劃與執行**
-   - 從最新成功處理的報告中取得 `doc_id`。
-   - 取得／建立對應 `(user, child)` 的 `RetrievalState`。
-   - 呼叫 `DSTBasedRetrievalPlanner.plan(user_query, turn_state, retrieval_state, doc_id)`：
-     - 決定要檢索的主題（subdomains）、每個主題的 quota
-     - 決定要使用的 section 類型（assessment / observation / training / suggestion）
-     - 決定 rerank 權重與是否需要澄清
-   - 呼叫 `RetrievalExecutor.execute` 依計畫實際查詢 Neo4j，得到 `candidates` 等結果。
-
-6. **建構 LLM 輸入與生成回答**
-   - 決定是否帶入對話歷史（依 `semantic_flow`、`tv_distance` 等條件，有時會「跳過歷史」）。
-   - 呼叫 `generate_llm_response(...)`：
-     - 內部利用 `LLMPromptManager.get_config(...)` 產生 `LLMGenerationConfig`
-     - 根據 `semantic_flow`、`retrieval_action`、`task_label`、`scope_label` 等調整溫度、長度、回應風格與上下文格式
-     - 將檢索到的 `candidates` 以及（可能存在的）`conversation_history` 一起送入 LLM
-   - 回應完成後，使用 `add_citation_boxes` 依 `candidates.path.page_start / page_end` 在尾端加入「【引用來源】第 X–Y 頁」。
-
-7. **狀態與記錄更新**
-   - DST：`context_similarity.update_bot_only(bot_response)` 並 `save_state(user_id, child_id)`
-   - 資料庫：在 `ChatMessage` 中新增一條 user 訊息、一條 bot 訊息
-   - 對話緩存檔案：在 `dialogue_cache/user_{user}_child_{child}_dialogue.json` 追加完整 `dst_analysis`
-   - 檢索狀態：更新該 `(user, child)` 對應 `RetrievalState.active_topics`
+- 對話狀態是如何被建模與更新的
+- 如何根據狀態決定 semantic_flow（延續／切換）
+- 如何選擇檢索策略（retrieval_action）
+- Task / Scope 對 LLM 回應風格與檢索範圍的影響
+- 重要門檻值與調參建議
 
 ---
 
-## 二、對話狀態追蹤（DST）
+## 架構總覽
 
-### 1. 組成元件
+### 主要模組與檔案
 
-- **文本編碼器 `TextEncoder`**
-  - 使用 BGE-M3 模型進行句向量編碼。
-  - 全專案共用一個實例（在 `init_dst_components()` 初始化）。
+- `app.py`
+  - 初始化 DST 共用元件：`init_dst_components()`
+  - 依 user + child 取得 `SemanticFlowClassifier`：`get_dialogue_classifier()`
+  - `/api/chat`：一輪對話的完整 pipeline（DST → 檢索策略 → 檢索 → LLM）
 
-- **領域路由器 `DomainRouter`**
-  - 使用 `DOMAINS` 與 `DOMAIN_ANCHORS` 域錨描述來計算「輸入句子對每個領域的相似度分布」。
-  - 主要輸出：
-    - `top_domain`
-    - `dist`（各領域機率）
-    - `entropy`
-    - `active_domains`（依 `DomainConfig` 門檻決定）
+- `dialogue_state_module/semantic_flow_module_v2.py`
+  - `SemanticFlowClassifier`：DST 主類別
+  - `FlowResult`：封裝整輪分析結果（Domain / Context / Topic / Policy / Task / Scope）
 
-- **上下文相似度 `ContextSimilarity`**
-  - 比較當前 user 輸入與：
-    - 前一輪 user 輸入
-    - 或前一輪 bot 回應
-  - 輸出：
-    - `C`（0–1）
-    - `source`：`"first_turn"` / `"prev_user"` / `"prev_bot"`
+- `dialogue_state_module/dst_policy.py`
+  - `DSTPolicyConfig`：決策門檻
+  - `compute_MT()`：多主題延續度
+  - `predicted_flow_from_C_MT()`：由 C + MT 決定 flow（continue / shift_soft / shift_hard）
+  - `decide_policy()`：產生 `retrieval_action` 與 `policy_case`
 
-- **多主題記憶追蹤 `MultiTopicTracker`**
-  - 維護一個跨輪的主題機率分布（memory_dist）。
-  - 計算：
-    - `topic_continue`（是否延續）
-    - `topic_overlap`（主題重疊度 MT）
-    - `tv_distance`（前後主題分布的總變異距離，用來偵測強切換）。
+- `dialogue_state_module/domain_anchors.py`
+  - `DOMAINS`：所有領域（粗大動作、精細動作、感覺統合、口語、認知等）
+  - `DOMAIN_ANCHORS`：每個領域的語意錨點句
+  - `OVERVIEW_ANCHORS`：整體查詢錨點句
+  - `DomainConfig`：active domain 門檻（prob / ratio / max count）
 
-- **Task / Scope 分類器 `TaskScopeClassifier`**
-  - 以「原型文本」為中心：
-    - Task：`T1`–`T6`、`T_meta`
-    - Scope：`S1`–`S5`
-  - 每個 label 會有多個代表句，使用同一個 embedding 模型做 cosine similarity＋softmax 得到分布。
+- `dialogue_state_module/task_scope_classifier.py`
+  - `DEFAULT_TASK_PROTOTYPES`：Task A–M 原型句
+  - `DEFAULT_SCOPE_PROTOTYPES`：Scope S_overview / S_domain / S_multi_domain 原型句
+  - `TaskScopeClassifier`：Task / Scope 的 prototype-based 分類器
 
-- **策略決策 `DSTPolicy`**
-  - 只依賴：
-    - `C`（上下文相似度）
-    - `MT`（Multi-topic continuity 分數）
-    - `normalized_entropy`（領域分布熵）
-    - `is_multi_domain`
-  - 輸出：
-    - `semantic_flow`
-    - `retrieval_action`
-    - `context_level`
-    - `is_ambiguous`
-    - `policy_case`
-
-### 2. FlowResult 結構
-
-DST 每一輪的完整分析包在 `FlowResult` 中，主要欄位如下：
-
-- **DomainAnalysis**
-  - `top_domain`: 當前輪最主要領域
-  - `top_prob`: 該領域機率
-  - `entropy`: 正規化熵（0=很確定、1=很模糊）
-  - `distribution`: 所有領域機率分布
-  - `active_domains`: 依門檻選出的活躍領域
-  - `active_domain_probs`: 活躍領域的機率子集
-  - `is_multi_domain`: 是否多領域（活躍領域數≥2）
-  - `fused_distribution`: 若觸發「模糊延續」，會回退／融合上一輪分布
-  - `is_overview_query`: 是否為「整體查詢」
-  - `overview_distribution`: 整體查詢使用的特別分布（目前策略為所有領域均勻）
-
-- **ContextAnalysis**
-  - `similarity_score` (`C`): 0–1 的上下文相似度
-  - `source`: `"first_turn"` / `"prev_user"` / `"prev_bot"`
-  - `is_first_turn`: 是否第一輪
-
-- **TopicAnalysis**
-  - `is_continuing`: 是否延續上一輪主題
-  - `overlap_score` (`MT`): 主題重疊分數（0–1）
-  - `reason`: 判斷原因（包含是否記憶重置等）
-  - `prev_top_domain` / `cur_top_domain`
-  - `prev_dist`: 更新前上一輪的領域分布（供模糊延續回退）
-  - `prev_active_domains`: 更新前上一輪的活躍領域
-  - `tv_distance`: 前後主題分布的總變異距離（0=完全相同、1=完全不同）
-
-- **PolicyDecision**
-  - `context_level`: `"high"` / `"low"`（由 C 決定）
-  - `is_ambiguous`: 是否模糊（由 entropy 判斷）
-  - `policy_case`: 如 `"CH_MTH_NARROW_MD"` 的代碼字串
-  - `retrieval_action`: 檢索動作（詳見後文）
-  - `semantic_flow`: `"continue"` / `"shift_soft"` / `"shift_hard"`
-
-- **任務與範圍**
-  - `task_label`: `T1`–`T6` 或 `T_meta`
-  - `task_dist`: Task 機率分布
-  - `scope_label`: `S1`–`S5`
-  - `scope_dist`: Scope 機率分布
+- `THRESHOLD_CONFIG.md`
+  - 集中說明所有重要門檻（DST、Domain Router、Context Similarity、Multi-Topic Tracker、Retrieval Planner）
 
 ---
 
-## 三、已定義的領域（Domains）
+## 一輪對話的狀態與策略流程
 
-由 `dialogue_state_module.domain_anchors.DOMAINS` 定義，目前共有 10 個領域：
+從 `/api/chat` 角度看，一輪對話會經過以下步驟：
 
-1. **粗大動作**
-2. **精細動作**
-3. **感覺統合**
-4. **口腔動作**
-5. **情緒行為與社會適應功能**
-6. **吞嚥功能**
-7. **口語理解**
-8. **口語表達**
-9. **說話**
-10. **認知功能**
+1. 使用者輸入訊息（+ 指定 child_id）
+2. 取得 (user, child) 對應的 `SemanticFlowClassifier`
+3. 執行 `classifier.predict(user_message)` → 得到 `FlowResult`
+4. 根據 `FlowResult` 組成 `turn_state`，傳給檢索規劃器
+5. 檢索規劃器輸出 `RetrievalPlan`，交給執行器實際從 Neo4j 檢索
+6. LLM 根據 user query + candidates + 對話歷史 + Task/Scope 產生回應
+7. 更新 DST 狀態與資料庫對話紀錄、對話快取檔
 
-每個領域在 `DOMAIN_ANCHORS` 中有多句專業描述＋常見問句作為語意錨點，用來做領域路由與主題記憶。
+後續章節說明 `FlowResult` 內各部分的意義與關係。
 
 ---
 
-## 四、任務與範圍：Task / Scope 定義
+## FlowResult 結構
 
-### 1. Task 類型（DEFAULT_TASK_PROTOTYPES ＋ TASK_NAME_ZH）
+`FlowResult` 由 `SemanticFlowClassifier.predict()` 產生，包含：
 
-- **T1_report_overview**：報告導覽／摘要  
-  - 幫使用者抓重點、整理主要結論與建議。
-
-- **T2_score_interpretation**：分數／量表解讀  
-  - 說明標準分、百分位的意義與發展位置。
-
-- **T3_clinical_to_daily**：臨床描述轉日常  
-  - 把臨床用語換算成日常生活表現與情境。
-
-- **T4_prioritization**：能力剖面／優先順序  
-  - 找出優勢與弱勢，協助決定先練什麼。
-
-- **T5_coaching**：訓練教練／在家怎麼做  
-  - 提供具體可操作的居家訓練步驟與活動設計。
-
-- **T6_decision_monitoring**：決策／追蹤與成效  
-  - 是否需要治療？如何安排頻率？怎麼看是否有效？
-
-- **T_meta**：行政／資源／隱私／溝通  
-  - 包含醫療資源、補助、與學校／家人溝通等非純臨床問題。
-
-### 2. Scope 類型（DEFAULT_SCOPE_PROTOTYPES ＋ SCOPE_NAME_ZH）
-
-- **S1_overview**：Overview（整體）  
-  - 問整份報告或整體發展情況。
-
-- **S2_domain**：Domain（單領域）  
-  - 聚焦在某一個領域（例如只問粗大動作）。
-
-- **S3_subskill_context**：Subskill / Context（具體能力／情境）  
-  - 問特定技能或情境（如單腳站、上下樓梯）。
-
-- **S4_bridging**：Bridging / Attribution（關聯／歸因）  
-  - 問「這個能力和那個狀況有什麼關係？」或「原因是什麼？」。
-
-- **S5_meta**：Meta（非臨床／行政）  
-  - 問掛號、補助、資源、如何跟老師／家人說明等。
+- DomainAnalysis：領域分析
+- ContextAnalysis：上下文相似度分析
+- TopicAnalysis：主題延續分析
+- PolicyDecision：策略決策（semantic_flow + retrieval_action）
+- Task / Scope：任務與檢索範圍分類
+- turn_index：第幾輪對話（從 0 開始）
 
 ---
 
-## 五、Semantic Flow 與策略決策
+## 領域分析（DomainAnalysis）
 
-### 1. Semantic Flow 狀態
+對應檔案：
 
-由 `DSTPolicy` 決定，主要取決於：
+- `dialogue_state_module/domain_anchors.py`
+- `dialogue_state_module/semantic_flow_module_v2.py` → `_analyze_domain()`
 
-- `C`：上下文相似度
-- `MT`：主題連續性（由 topic_overlap 和 topic_continue 組合）
+### 領域與錨點
 
-三種狀態：
+- `DOMAINS` 定義所有評估領域，例如：
+  - 粗大動作、精細動作、感覺統合、口腔動作、吞嚥功能
+  - 情緒行為與社會適應功能
+  - 口語理解、口語表達、說話
+  - 認知功能
+- `DOMAIN_ANCHORS` 為每個領域定義多句描述與常見問句，做為語意錨點。
+- `OVERVIEW_ANCHORS` 用於偵測整體查詢（Overview），例如「整體狀況」、「整份報告重點」。
 
-1. **continue**
-   - C 高且 MT 高
-   - 強烈延續前一輪主題
-2. **shift_soft**
-   - 一高一低或兩者都在「soft 區間」
-   - 主題池仍相關，但有輕微轉向
-3. **shift_hard**
-   - C 低且 MT 低
-   - 視為強切換，接近全新話題
+### DomainAnalysis 欄位
 
-### 2. 檢索動作（retrieval_action）
+- `top_domain`：目前最可能的領域
+- `distribution`：各領域機率分布（由 TextEncoder + anchors 計算）
+- `active_domains`：根據門檻篩選後的「活躍領域」
+- `active_domain_probs`：active 領域的機率
+- `entropy`：分布的正規化熵（0 = 非常確定，1 = 非常模糊）
+- `is_multi_domain`：是否多領域（active_domains 數量 >= 2）
+- `fused_distribution`：模糊延續時融合後的分布（可沿用上一輪）
+- `is_overview_query` / `overview_distribution`：整體查詢旗標與對應分布
 
-由 `decide_policy` 輸出：
+### 重要門檻（摘要）
 
-- **NARROW_GRAPH**
-  - 代表「延續性強，可以縮小檢索範圍」。
-  - 規劃器會偏向「上一輪與本輪領域交集」。
+見 `THRESHOLD_CONFIG.md`：
 
-- **CONTEXT_FIRST**
-  - 代表「看起來像延續，但主題池不完全對齊」。
-  - 先依當前上下文延續，使用本輪的 active_domains。
-
-- **WIDE_IN_DOMAIN**
-  - 代表「同一大領域內的新角度或新子題」。
-  - 在 top domain 所屬的 macro-domain 下做廣泛檢索。
-
-- **DUAL_OR_CLARIFY**
-  - 代表「C 與 MT 都低或情況模糊」，需要：
-    - 同時檢索多個可能領域，或
-    - 提示 LLM 以澄清式的回答回問使用者。
-
-`action_to_predicted_flow` 中也定義了 action → semantic_flow 的預測關係：
-
-- `NARROW_GRAPH` / `CONTEXT_FIRST` → **continue**
-- `WIDE_IN_DOMAIN` → **shift_soft**
-- `DUAL_OR_CLARIFY` → **shift_hard**
-
-### 3. Policy Case 編碼（policy_case）
-
-`policy_case` 的格式大致為：
-
-- `C{H/L}_MT{H/L}_{ACTION}_{修飾}`，例如：
-  - `CH_MTH_NARROW_MD`
-  - `CL_MTH_WIDE_AMBIG`
-
-其中：
-
-- `CH` / `CL`：Context level（High / Low）
-- `MTH` / `MTL`：Multi-topic continuity level（High / Low）
-- `_NARROW` / `_CTX` / `_WIDE` / `_DUAL`：對應檢索動作
-- `_AMBIG`：當前輪被判定為模糊（entropy 高）
-- `_MD`：多領域（`is_multi_domain=True`）
-
-### 4. 模糊與模糊延續（Ambiguity & Ambiguous Continuation）
-
-`DSTPolicyConfig` 中主要門檻：
-
-- `entropy_high_th = 0.8`：entropy ≥ 0.8 視為「高模糊度」
-- `enable_ambiguous_continuation = True`：啟用模糊延續
-- `ambiguous_continuation_entropy_th = 0.8`
-- `ambiguous_continuation_min_overlap = 0.5`
-
-在 `SemanticFlowClassifier._decide_policy` 中：
-
-- 若：
-  - entropy 過高，且
-  - 有上一輪的分布 `prev_dist` 與 `prev_active_domains`
-- 則會：
-  - 將 topic_overlap 至少拉到 0.5
-  - 把 `topic_continue` 調整為 True
-  - **直接使用上一輪的分布作為 fused_distribution**
-  - 回退 `memory_dist` 與 `prev_active_domains` 到上一輪狀態
-
-另外，對整體查詢（overview query）：
-
-- 會標記 `is_overview_query=True`
-- 並建立 `overview_distribution`（目前策略是所有領域均勻）
-- 之後檢索與 LLM-config 都會優先使用這個整體分布。
+- Softmax 溫度（domain router）：
+  - `temperature = 0.05`
+- active domain 門檻：
+  - `active_prob_th = 0.30`
+  - `active_ratio_th = 0.60`
+  - `min_active_domains = 1`
+  - `max_active_domains = 4`（或 5，依 DomainConfig）
 
 ---
 
-## 六、記憶設計與重置策略
+## 上下文相似度分析（ContextAnalysis）
 
-### 1. DST 內部記憶
+對應檔案：
 
-- **ContextSimilarity**
-  - 儲存前一輪 user / bot 向量，用來計算 C。
-  - 在 `reset()` 時會清空。
+- `dialogue_state_module/context_similarity.py`
+- `dialogue_state_module/semantic_flow_module_v2.py` → `_analyze_context()`
 
-- **MultiTopicTracker**
-  - 維護：
-    - `memory_dist`：累積的主題分布記憶
-    - `prev_dist`：上一輪分布
-    - `prev_active_domains`：上一輪活躍領域
-  - 若 TV 距離（`tv_distance`）大於某門檻（在 `MultiTopicTracker` 內部），會視為「強切換」，記憶被重置。
+### 指標 C（Context similarity）
 
-### 2. LLM 對話歷史的使用／跳過
+- C 反映「當前輸入」與「上一輪 user 或 bot」的語義相似度（0–1）。
+- 第 0 輪：沒有歷史，使用中性值：
+  - `neutral_first_turn = 0.5`
+- 後續輪數：
+  - 使用共用 `TextEncoder` 比較當前文字與歷史文字向量。
 
-在 `chat()` 中會依下列邏輯決定是否帶入 `conversation_history`：
+C 的角色：
 
-- **跳過歷史（should_skip_history = True）的條件：**
-  1. 記憶重置：
-     - `tv_distance >= 0.6`，或
-     - `semantic_flow == "shift_hard"`，或
-     - `topic_analysis.reason` 含有 `"mem_reset"`
-  2. 主題延續狀態由延續轉為切換：
-     - 前一輪 `semantic_flow == "continue"`，本輪變為 `shift_soft` / `shift_hard`
-     - 或 `shift_soft → shift_hard`
-
-- **未跳過歷史時：**
-  - 從 `ChatMessage` 查詢最近 10 則屬於該 `(user, child)` 的訊息（含 user/bot），依時間排序，轉成 `conversation_history` 傳入 LLM。
-
-### 3. 永久儲存與重置 API
-
-- **資料庫 `ChatMessage`**
-  - 每條 user 訊息包含：
-    - `message`
-    - `flow_state`（簡化版 DST：domain、entropy、context_similarity、semantic_flow、retrieval_action）
-    - `retrieval_info`（flow_type、retrieval_action、context_level）
-  - bot 訊息則只存文字內容。
-
-- **檔案系統**
-  - `dialogue_states/`：`SemanticFlowClassifier.save_state()` 用來儲存 DST 內部狀態。
-  - `dialogue_cache/user_{user}_child_{child}_dialogue.json`：
-    - 每一輪追加：
-      - `timestamp`
-      - `turn_index`
-      - `user_message`
-      - `bot_response`
-      - `dst_analysis`（完整 FlowResult dict）
-
-- **重置 API：`POST /api/chat/reset`**
-  - 驗證 `child_id` 權限後，執行：
-    1. `SemanticFlowClassifier.reset()`（包含 context & topic 記憶）
-    2. `delete_dialogue_state(user_id, child_id)`（刪除 DST 狀態檔）
-    3. 刪除該 `(user, child)` 的全部 `ChatMessage`
-    4. 刪除對應的 `dialogue_cache` JSON 檔
-    5. 重置 `RetrievalState`（若存在）
+- C 高 → 比較像是「接著上一輪的內容繼續問」。
+- C 低 → 比較像是「換了一個新話題」。
 
 ---
 
-## 七、檢索規劃與執行（DSTBasedRetrievalPlanner）
+## 主題延續與多領域分析（TopicAnalysis）
 
-### 1. 前置條件與基礎元件
+對應檔案：
 
-- 每個兒童上傳 PDF 報告時：
-  - 經 `process_pdf_to_graph` 處理：
-    - 解析內容、切分為 grouped units
-    - 依子領域／section 類型寫入 Neo4j
-  - 在 `KnowledgeGraphProcessing` 紀錄：
-    - `doc_id`
-    - `status`（成功才會被後續檢索使用）
+- `dialogue_state_module/multi_topic_tracker.py`
+- `dialogue_state_module/semantic_flow_module_v2.py` → `_analyze_topic()`
 
-- 檢索相關全域單例：
-  - `GraphClient`：包 Neo4j 連線
-  - `DSTBasedRetrievalPlanner`：主要規劃器
-  - `RetrievalExecutor`：
-    - 若 DST 的 `TextEncoder` 可用，會共用底層 BGE-M3 sentence transformer 作為 rerank embedding
-    - 否則回退到 bigram Jaccard 相似度
+### Memory 與 TV distance
 
-### 2. 規劃器輸入（turn_state 主要欄位）
+Multi-Topic Tracker 維護一個跨輪的 `memory_dist`：
 
-- 來自 DST 的：
-  - `retrieval_action`
-  - `domain_distribution`
-  - `task_dist` / `task_pred`
-  - `scope_pred`
-  - `semantic_flow`
-  - `top_domain` / `top_domain_prob`
-  - `topic_overlap`
-  - `is_ambiguous`
-  - `normalized_entropy`
-  - `active_domains` / `prev_active_domains`
-  - `fused_distribution_used`
-  - `turn_index`
+- 每一輪領域分布會用 `decay_factor` 做 EMA：
+  - 新記憶 = 舊記憶 × decay_factor + 本輪分布 × (1 - decay_factor)
+  - 預設 `decay_factor = 0.7`（保留約 70% 歷史，30% 新分布）
 
-### 3. 主流程（簡化版）
+同時計算：
 
-1. **根據 entropy 調整 active_domains**
-   - entropy 門檻：`ENTROPY_THRESHOLD = 0.8`
-   - 若 entropy 高且有 `prev_active_domains`：
-     - 若 DST 已觸發模糊延續（`fused_distribution_used=True`）：
-       - 直接使用上一輪的 `prev_active_domains`
-     - 否則將 `prev_active_domains` 與本輪 `top_domain` 合併成新的 active_domains。
+- `overlap_score`：根據 Jaccard + 加權 overlap 計算主題重疊程度
+- `tv_distance`：memory_dist 與本輪分布的 TV distance
+  - `hard_shift_tv_threshold = 0.6`
+  - 大於此值視為「強切換」，會重置記憶
 
-2. **決定 active_tasks**
-   - 門檻：`TASK_THRESHOLD = 0.1`
-   - 從 `task_dist` 中挑出 ≥ 0.1 的 labels
-   - 若沒有分布資料，則 fallback 用 `task_pred`。
+### TopicAnalysis 欄位
 
-3. **決定要用的 section 類型與權重**
-   - `use_sections`：
-     - 依 active_tasks＋scope 決定要用哪些 section（assessment / observation / training / suggestion）。
-   - `section_type_weights`：
-     - 依 active_tasks 的機率分布與 `TopicOntology.TASK_TO_SECTION_WEIGHTS` 做機率加權合併。
-
-4. **依 Scope 決定 subdomain 範圍與 quota**
-   - 總配額 `TOTAL_K = 10`
-   - **先依 `scope_pred`**：
-     - `S_overview`：topics = 全部領域（ontology.TOPIC_LABELS），配額依分布或均分
-     - `S_domain`：單一領域，全部配額給該領域
-     - `S_multi_domain`（或未知）：過濾極小機率 `SUBDOMAIN_PROB_THRESHOLD = 0.03`，**再依 `retrieval_action`** 呼叫不同策略：
-     - `NARROW_GRAPH`：
-       - 優先使用 DST 的 `prev_active_domains ∩ active_domains`
-       - 若無交集，使用本輪 active_domains
-     - `CONTEXT_FIRST`：
-       - 優先使用本輪 active_domains
-       - 若無，使用本輪高機率 subdomains（≥ 0.1）
-     - `WIDE_IN_DOMAIN`：
-       - 優先使用本輪 active_domains
-       - 若無，則以 top_domain 的 macro-domain 為範圍，擴展所有同 macro-domain 且機率≥門檻的 subdomains
-     - `DUAL_OR_CLARIFY`：
-       - 優先使用本輪 active_domains
-       - 若 top_domain 機率≥ 0.3，則只用 top_domain
-       - 否則使用所有過門檻 subdomains
-
-   - 最後在選定的 subdomains 之間：
-     - 依其機率分布＋「每個至少 1 個」原則分配 10 個 quota。
-
-5. **兩層分配：subdomain → section type**
-   - 將每個 subdomain 的 quota，再依 `section_type_weights` 與 `use_sections` 分配到不同 section type。
-   - 輸出 `two_level_quota`：`{"粗大動作": {"training": 3, "suggestion": 2, ...}, ...}`。
-
-6. **設定其他計畫欄位**
-   - `mode`: 一律為 `RetrievalMode.TOPIC_FOCUSED`
-   - `topic_policy`: 一律為 `TopicPolicy.MIX_TOPK`
-   - `k_items = TOTAL_K`
-   - `ask_clarify`: 當 `retrieval_action == "DUAL_OR_CLARIFY"` 且 DST 標記模糊時為 True
-   - `rerank_weights`：
-     - `semantic_flow == "continue"`：
-       - `sim_q`: 0.4, `sim_anchor`: 0.5, `graph_prox`: 0.1
-     - `shift_soft`：
-       - `sim_q`: 0.5, `sim_anchor`: 0.3, `graph_prox`: 0.2
-     - `shift_hard`：
-       - `sim_q`: 0.6, `sim_anchor`: 0.2, `graph_prox`: 0.2
+- `is_continuing`：主題是否延續（布林值）
+- `overlap_score`：多主題延續指標（0–1），之後會合成 MT
+- `reason`：判斷原因（含 debug 訊息與是否 mem_reset 等）
+- `prev_top_domain` / `cur_top_domain`：前一輪／本輪頂級領域
+- `prev_dist` / `prev_active_domains`：更新前的上一輪領域分布與活躍領域（供模糊延續使用）
+- `tv_distance`：TV 距離，用來決定是否強切換
 
 ---
 
-## 八、LLM 回應生成與提示策略
+## Task / Scope 分類
 
-### 1. LLMGenerationConfig 主要欄位
+對應檔案：
 
-- 生成超參數：
-  - `temperature`
-  - `max_tokens`
-  - `top_p`
-  - `frequency_penalty`
-  - `presence_penalty`
-- 提示詞：
-  - `system_prompt_template`
-  - `user_prompt_template`（實際是在 `build_user_prompt` 裡直接構造字串）
-- 上下文處理：
-  - `max_context_items`
-  - `context_format_style`: `"detailed"` / `"concise"` / `"structured"`
-- 回應風格：
-  - `response_style`: `"professional"` / `"friendly"` / `"concise"` / `"detailed"` / `"step_by_step"` / `"explanatory"` / `"comprehensive"`
-  - `include_examples`
-  - `include_caution`
+- `dialogue_state_module/task_scope_classifier.py`
+- `dialogue_state_module/semantic_flow_module_v2.py` → `_classify_task_only()` / `_classify_scope()`
 
-### 2. 配置合併策略
+### Task A–M：任務類型
 
-`LLMPromptManager.get_config(...)` 會依下列來源產生多組 config，最後合併：
+預設定義在 `DEFAULT_TASK_PROTOTYPES`，例如：
 
-1. **base_config（依 semantic_flow）**
-   - `continue`：偏向較低溫度、較短回答、專業風格。
-   - `shift_soft`：略提高溫度，偏向 friendly。
-   - `shift_hard`：允許稍長回答與較高溫度，偏向 detailed。
+- A：報告總覽與閱讀順序
+- B：分數／量表／百分位解讀
+- C：臨床觀察與表現解讀
+- D：能力剖面（優勢／需求／優先順序）
+- E：在家訓練怎麼做
+- F：融入日常作息的練習
+- G：是否需要早療／成效追蹤
+- H：轉介與在地資源
+- I：報告分享／隱私與安全
+- J：與學校合作
+- K：補助／福利／申請
+- L：後續追蹤／再評估
+- M：家長情緒支持與家庭協作
 
-2. **retrieval_config（依 retrieval_action）**
-   - `NARROW_GRAPH`：context 數量較少、但每條較詳細。
-   - `CONTEXT_FIRST`：偏向 structured。
-   - `WIDE_IN_DOMAIN`：允許更多 context，改用 concise 格式。
-   - `DUAL_OR_CLARIFY`：加入 caution，提醒答案可能需要澄清。
+分類方式：
 
-3. **task_config（依 task_label / scope_label）**
-   - 不同 Task／Scope 對應不同：
-     - `max_tokens`
-     - `response_style`
-     - `max_context_items`
+- 將每個 Task 的原型句嵌入為向量，取平均為 prototype 向量。
+- 對輸入文字嵌入為向量，與所有 prototype 計算 cosine similarity。
+- 使用溫度 `temp = 12.0` 作 softmax，得到機率分布與最佳 label。
 
-4. **special_config（依 is_overview_query / is_multi_domain / is_ambiguous）**
-   - overview：允許最多 tokens 與 context，並使用 structured＋comprehensive。
-   - multi_domain：強制使用 structured context。
-   - ambiguous：降低 temperature、打開 include_caution。
+### Scope：檢索範圍
 
-最後由 `_merge_configs` 依優先順序（base < retrieval < task < special）合併為一個 `LLMGenerationConfig`。
+範圍類型（`SCOPE_NAME_ZH`）：
 
-### 3. System Prompt 與 User Prompt
+- `S_overview`：Overview（整體）
+- `S_domain`：Domain（單領域）
+- `S_multi_domain`：Multi-Domain（多領域）
 
-- **System Prompt**
-  - 強制 LLM 使用繁體中文。
-  - 定義整體角色（專業早療助手）。
-  - 規範回應格式（避免使用 `#` 標題、`-` 列表等），以符合產品 UI 需求。
-  - 若有 Task／Scope，會在提示詞中加入對應的「專長說明」與「回答範圍」。
-  - 若 `is_ambiguous=True`，會加入「如何自然地反問與引導」的指示。
+Scope 決策規則（`_classify_scope()`）：
 
-- **User Prompt**
-  - 若無檢索 context：
-    - 若非模糊：直接使用 user query。
-    - 若模糊：在 query 後附加一段「如何用自然語氣反問與引導」的指示文字。
-  - 若有檢索 context：
-    - 先依 `context_format_style` 將 `candidates` 格式化成一段文字。
-    - 再附上「回答要求」與原始 user query。
-    - 若 `is_ambiguous`，同樣會再加一段「反問與引導」的指示。
+1. 若 `domain_analysis.is_overview_query == True`
+   - 直接標為 `S_overview`。
+2. 若 `domain_analysis.fused_distribution` 不為空（模糊延續已啟動）
+   - Scope 沿用上一輪（`_prev_scope`，預設 `S_overview`）。
+3. 若 `turn_index == 0` 且 entropy >= ambiguous_continuation_entropy_th（0.8）
+   - 視為首輪模糊查詢，預設 `S_overview`。
+4. 否則：
+   - active_domains 數量 >= 2 → `S_multi_domain`
+   - 否則 → `S_domain`
 
-### 4. 引用標註（Citation）
-
-- `add_citation_boxes(response, candidates)`：
-  - 從每個 candidate 的 `path` 中抓 `page_start` / `page_end`。
-  - 去重後依頁碼排序。
-  - 在回應尾端附上：
-    - `【引用來源】第 X 頁、第 X–Y 頁、...`
+Scope 決定了「要檢索多少主題分支」，會影響 Retrieval Planner 如何選 topics 與分配 quota。
 
 ---
 
-## 九、現有狀態與策略總表（摘要）
+## 策略決策（PolicyDecision）
 
-為方便快速查閱，以下是目前系統中「已定義的狀態與策略」列表：
+對應檔案：
 
-- **領域（Domains）**：10 個  
-  - 粗大動作、精細動作、感覺統合、口腔動作、情緒行為與社會適應功能、吞嚥功能、口語理解、口語表達、說話、認知功能
+- `dialogue_state_module/dst_policy.py`
+- `dialogue_state_module/semantic_flow_module_v2.py` → `_decide_policy()`
 
-- **Task 類型**：7 個  
-  - T1_report_overview（報告導覽／摘要）  
-  - T2_score_interpretation（分數／量表解讀）  
-  - T3_clinical_to_daily（臨床描述轉日常）  
-  - T4_prioritization（能力剖面／優先順序）  
-  - T5_coaching（訓練教練／在家怎麼做）  
-  - T6_decision_monitoring（決策／追蹤與成效）  
-  - T_meta（行政／資源／隱私／溝通）
+### 三個核心指標
 
-- **Scope 類型**：3 個（依規則在 DST 偵測，決定要檢索多少主題分支）  
-  - S_overview（整體）→ 查整張圖  
-  - S_domain（單領域）→ 查單一領域  
-  - S_multi_domain（多領域）→ 查多個特定領域  
-  - 改版後流程詳見：[docs/DIALOGUE_FLOW_AFTER_SCOPE_UPDATE.md](docs/DIALOGUE_FLOW_AFTER_SCOPE_UPDATE.md)
+- C：Context similarity（上下文相似度，0–1）
+- MT：Multi-topic continuity（多主題延續度，0–1）
+  - `MT = max(overlap_score, 1.0 if topic_continue else 0.0)`
+- normalized_entropy：領域分布熵，代表「模糊程度」
 
-- **Semantic Flow 狀態**：3 個  
-  - `continue`：C 高且 MT 高，強延續  
-  - `shift_soft`：中度切換，同主題池內新問題  
-  - `shift_hard`：強切換，新主題
+### 決策門檻（DSTPolicyConfig）
 
-- **檢索動作（retrieval_action）**：4 個  
-  - `NARROW_GRAPH`：縮小檢索範圍  
-  - `CONTEXT_FIRST`：優先使用上下文  
-  - `WIDE_IN_DOMAIN`：在同一 macro-domain 內廣泛檢索  
-  - `DUAL_OR_CLARIFY`：多路檢索或澄清
+- 主決策門檻：
+  - `C_high_th = 0.55`
+  - `MT_high_th = 0.50`
+- soft 區間：
+  - `C_soft_th = 0.45`
+  - `MT_soft_th = 0.30`
+- 模糊度：
+  - `entropy_high_th = 0.8`
+  - `ambiguous_continuation_entropy_th = 0.8`（與 THRESHOLD_CONFIG 保持一致）
+- 模糊延續：
+  - `enable_ambiguous_continuation = True`
+  - `ambiguous_continuation_min_overlap = 0.5`
 
-- **檢索模式（RetrievalMode）**：定義 5 種，目前實際使用：  
-  - 使用中：`TOPIC_FOCUSED`  
-  - 保留兼容：`GLOBAL_OVERVIEW`、`REPORT_OVERVIEW`、`DOMAIN`、`SCORE`、`META`
+### Flow 類型：continue / shift_soft / shift_hard
 
-- **主題策略（TopicPolicy / DomainPolicy）**：定義多種，目前實際使用：  
-  - 使用中：`MIX_TOPK`  
-  - 保留兼容：`LOCK_TOP1`、`TOP2_UNION`、`UNLOCKED`、`SOFT_TOP1`、`UNLOCK_GLOBAL`
+由 `predicted_flow_from_C_MT(C, MT)` 決定：
 
-- **重要門檻與超參數（摘錄）**  
-  - `DSTPolicyConfig.C_high_th = 0.55`  
-  - `DSTPolicyConfig.C_soft_th = 0.45`  
-  - `DSTPolicyConfig.MT_high_th = 0.50`  
-  - `DSTPolicyConfig.MT_soft_th = 0.30`  
-  - `DSTPolicyConfig.entropy_high_th = 0.8`（模糊判定與模糊延續門檻）  
-  - `ambiguous_continuation_min_overlap = 0.5`（模糊延續時強制提升主題重疊度）  
-  - 檢索總配額 `TOTAL_K = 10`  
-  - Task 臨界值 `TASK_THRESHOLD = 0.1`  
-  - Subdomain 機率下限 `SUBDOMAIN_PROB_THRESHOLD = 0.03`
+- `continue`
+  - `C >= C_high_th` 且 `MT >= MT_high_th`
+  - 代表內容與主題都高度延續。
+- `shift_soft`
+  - flow_soft_when_one_high = True 時：
+    - C 或 MT 其中一個 high，或兩者都在 soft 範圍。
+  - 代表仍在同主題池中，但承接較弱。
+- `shift_hard`
+  - 其他情況（C、MT 都低）
+  - 代表可能是新主題或明顯跳題。
 
-以上說明涵蓋了目前專案中對話運作的完整管線與所有主要狀態／策略定義，可作為後續開發、調參與除錯的參考文件。
+### 檢索策略：retrieval_action
 
+由 `decide_policy()` 輸出，主要依 C_level / MT_level + 是否模糊決定：
+
+- `NARROW_GRAPH`
+  - C、MT 均高，且非模糊 → 在既有主題範圍內「縮小」檢索。
+- `CONTEXT_FIRST`
+  - 文字延續但主題分布不明確，或模糊情況下：
+    - 優先依上下文處理，不強行縮小檢索。
+- `WIDE_IN_DOMAIN`
+  - 主題池延續（MT 高），但語義相似度較低，或 C、MT 都低但不模糊：
+    - 在同領域（或主題池）內做「較廣」的檢索。
+- `DUAL_OR_CLARIFY`
+  - C、MT 都低且模糊：
+    - 代表「不知道該從哪個主題開始」，規劃器可以選擇雙路檢索或反問澄清。
+
+`PolicyDecision` 欄位：
+
+- `context_level`：C 高或低
+- `is_ambiguous`：是否高熵模糊
+- `policy_case`：例如 `CH_MTH_NARROW_AMBIG_MD`（便於 debug）
+- `retrieval_action`：如上四種
+- `semantic_flow`：根據 `action_to_predicted_flow()` 反推 continue / shift_soft / shift_hard
+
+---
+
+## 模糊延續與整體查詢
+
+對應檔案：
+
+- `dialogue_state_module/semantic_flow_module_v2.py` → `_decide_policy()` 與 `_get_overview_distribution()`
+
+### 模糊延續（Ambiguous Continuation）
+
+當條件滿足：
+
+- entropy >= ambiguous_continuation_entropy_th（0.8）
+- `turn_index > 0`
+- 有有效的 `prev_dist` 與 `prev_active_domains`
+
+系統會：
+
+1. 調整 MT 相關值：
+   - 將 `topic_overlap` 至少提升到 0.5
+   - 若原本 `topic_continue=False`，改為 True
+2. 更新 TopicAnalysis 的 `reason`，標記模糊延續。
+3. 回退記憶與分布：
+   - `fused_distribution = prev_dist`
+   - 更新 `topic_tracker.state.memory_dist`、`prev_dist`、`prev_active_domains` 為上一輪狀態。
+
+效果：
+
+- 使用者講得模糊但大致延續同一大主題時，系統會「沿用上一輪主題與分布」，避免每輪都重新判斷。
+
+### 整體查詢（Overview Query）
+
+利用 `OVERVIEW_ANCHORS` 與向量相似度判斷：
+
+- 使用 TextEncoder 計算當前輸入與 overview anchors 的相似度。
+- 若在「模糊」情境下，且：
+  - 向量相似度 >= `overview_sim_threshold`，或
+  - 上一輪本來就是整體查詢
+- 則標記為 `is_overview_query=True`，並建立 `overview_distribution`：
+  - 可能策略：
+    - 所有領域均勻分布
+    - 使用記憶中的領域分布
+    - 混合策略（記憶 + 當前 active）
+
+整體查詢會強烈影響 Scope 與 Retrieval Planner：
+
+- Scope 直接設為 `S_overview`
+- Retrieval Planner 傾向採用 `GLOBAL_OVERVIEW` 類型的計畫
+
+---
+
+## 檢索與 LLM 的整合
+
+DST 與 Policy 的輸出，被整合成 `turn_state` 丟給檢索規劃器，影響：
+
+- 檢索模式（TOPIC_FOCUSED / GLOBAL_OVERVIEW / REPORT_OVERVIEW / SCORE / META）
+- 選擇哪些 topics（單領域、多領域或全域）
+- topic / section 的配額分配（`topic_alloc`、`two_level_quota`）
+- section 類型的權重（依 Task / Scope 調整）
+- 是否走 `CLARIFY` 路徑（直接產生反問，不進 Neo4j）
+
+LLM 端透過：
+
+- `llm_generate_module/prompt_manager.py`
+  - 根據 semantic_flow、retrieval_action、task_label、scope_label 等，產生 `LLMGenerationConfig`
+  - 動態設定：
+    - temperature、max_tokens、max_context_items
+    - context_format_style（detailed / concise / structured）
+    - response_style（professional / step_by_step / explanatory / comprehensive）
+    - system_prompt（繁體中文、格式限制、與家長溝通口吻）
+- `llm_generate_module/llm_generator.py`
+  - 實際呼叫 LM Studio OpenAI 相容 API
+  - 組合 system + history + user prompt（含檢索 context）
+  - 回傳回應後移除 markdown `#` 標題，並由 `app.py` 在尾端附上引用頁碼區塊
+
+---
+
+## 門檻調整建議（精簡版）
+
+詳細說明請見 `THRESHOLD_CONFIG.md`，以下是和對話狀態／策略最相關的幾項：
+
+1. 模糊度敏感度
+   - 更容易判為模糊：
+     - 降低 `entropy_high_th` 與 `ambiguous_continuation_entropy_th`（例如 0.7）
+   - 更不容易判為模糊：
+     - 提高到 0.85 以上
+
+2. 主題延續敏感度
+   - 更容易延續：
+     - 降低 `overlap_th`（例如 0.4）
+   - 更容易判為切換：
+     - 提高到 0.6
+
+3. 領域集中度與多領域
+   - 讓 top_domain 更明確：
+     - 降低 `Domain Router` 的 `temperature` 或提高 `active_prob_th` / `active_ratio_th`
+   - 讓系統更願意考慮多領域：
+     - 提高 `temperature` 或放寬 active 門檻，並適度提高 `max_active_domains`
+
+4. 記憶保留
+   - 更重視歷史分布：
+     - 提高 `decay_factor`（例如 0.8）
+   - 更快適應新輸入：
+     - 降低到 0.5
+
+調整方式建議：
+
+- 每次只動 1–2 個門檻，搭配 `/api/chat` log 觀察：
+  - `entropy`、`C`、`MT`、`tv_distance`
+  - `semantic_flow`、`policy_case`、`retrieval_action`
+- 特別測試：
+  - 清楚單一領域問題
+  - 多領域混合問題
+  - 模糊問句與整體概覽型問題
+  - 強切換情境（從一個領域突然問完全不同領域）
+
+---

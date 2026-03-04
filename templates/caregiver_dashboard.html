@@ -8,10 +8,7 @@
         <div class="dashboard-header mb-5">
             <div class="d-flex align-items-center justify-content-between">
                 <div>
-                    <h1 class="display-5 mb-2">
-                        <i class="fas fa-user text-success me-3"></i>照護者儀錶板
-                    </h1>
-                    <p class="lead text-muted">歡迎回來，{{ current_user.username }}！</p>
+                    <h2 class="welcome-title mb-0">歡迎回來，{{ current_user.username }}！</h2>
                 </div>
                 <div class="dashboard-stats">
                     <div class="stat-card">
@@ -90,54 +87,56 @@
     </div>
 </div>
 
-<!-- 兒童資料和報告 -->
+<!-- 兒童資料（與聯評報告管理同顯示方式：report-section + report-item 風格） -->
 {% if children %}
 <div class="row mb-5">
     <div class="col-12">
-        <h3 class="mb-4">
-            <i class="fas fa-child text-primary me-2"></i>兒童資料
-        </h3>
-    </div>
-    {% for child in children %}
-    <div class="col-lg-6 mb-4">
-        <div class="card glass-effect h-100">
+        <div class="card glass-effect">
             <div class="card-header">
-                <div class="d-flex align-items-center justify-content-between">
-                    <h5 class="mb-0">
-                        <i class="fas fa-child text-primary me-2"></i>{{ child.name }}
-                    </h5>
-                    <span class="badge bg-primary">{{ child.gender }}</span>
-                </div>
+                <h5 class="mb-0">
+                    <i class="fas fa-child text-primary me-2"></i>兒童資料
+                </h5>
             </div>
             <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-6">
-                        <div class="child-info-item">
-                            <div class="child-info-icon">
-                                <i class="fas fa-birthday-cake text-warning"></i>
-                            </div>
-                            <div class="child-info-content">
-                                <div class="child-info-label">出生日期</div>
-                                <div class="child-info-value">{{ child.birth_date }}</div>
+                <div class="row g-4">
+                    {% for child in children %}
+                    <div class="col-lg-6">
+                        <div class="report-section">
+                            <h6 class="report-child-name mb-3">
+                                <i class="fas fa-child text-primary me-2"></i>{{ child.name }}
+                                <span class="badge bg-primary ms-2">{{ child.gender }}</span>
+                            </h6>
+                            <div class="report-list">
+                                <div class="report-item">
+                                    <div class="report-header">
+                                        <div class="report-icon">
+                                            <i class="fas fa-birthday-cake text-warning"></i>
+                                        </div>
+                                        <div class="report-info">
+                                            <div class="report-filename">出生日期</div>
+                                            <div class="report-date">{{ child.birth_date }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="report-item">
+                                    <div class="report-header">
+                                        <div class="report-icon">
+                                            <i class="fas fa-calendar-alt text-success"></i>
+                                        </div>
+                                        <div class="report-info">
+                                            <div class="report-filename">年齡</div>
+                                            <div class="report-date">{{ ((now - child.birth_date).days // 365) if now else '計算中' }} 歲</div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
-                    <div class="col-6">
-                        <div class="child-info-item">
-                            <div class="child-info-icon">
-                                <i class="fas fa-calendar-alt text-success"></i>
-                            </div>
-                            <div class="child-info-content">
-                                <div class="child-info-label">年齡</div>
-                                <div class="child-info-value">{{ ((now - child.birth_date).days // 365) if now else '計算中' }} 歲</div>
-                            </div>
-                        </div>
-                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </div>
     </div>
-    {% endfor %}
 </div>
 
 <!-- 報告管理區域 -->
@@ -159,33 +158,45 @@
                                 <i class="fas fa-child text-primary me-2"></i>{{ child.name }} 的報告
                             </h6>
                             {% if child.reports %}
-                            <div class="report-list">
-                                {% for report in child.reports %}
-                                <div class="report-item">
-                                    <div class="report-header">
-                                        <div class="report-icon">
-                                            <i class="fas fa-file-pdf text-danger"></i>
-                                        </div>
-                                        <div class="report-info">
-                                            <div class="report-filename">{{ report.original_filename }}</div>
-                                            <div class="report-date">
-                                                <i class="fas fa-clock me-1"></i>
-                                                {{ report.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
+                            <!-- 折疊按鈕：照護者可展開/收起該孩子的所有報告 -->
+                            <button class="btn btn-sm btn-outline-primary mb-2"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#caregiver-reports-{{ child.id }}"
+                                    aria-expanded="false"
+                                    aria-controls="caregiver-reports-{{ child.id }}">
+                                <i class="fas fa-file-pdf me-1"></i>
+                                查看 {{ child.reports|length }} 筆報告
+                            </button>
+                            <div class="collapse" id="caregiver-reports-{{ child.id }}">
+                                <div class="report-list mt-2">
+                                    {% for report in child.reports|sort(attribute='uploaded_at', reverse=True) %}
+                                    <div class="report-item">
+                                        <div class="report-header">
+                                            <div class="report-icon">
+                                                <i class="fas fa-file-pdf text-danger"></i>
+                                            </div>
+                                            <div class="report-info">
+                                                <div class="report-filename">{{ report.original_filename }}</div>
+                                                <div class="report-date">
+                                                    <i class="fas fa-clock me-1"></i>
+                                                    {{ report.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
+                                                </div>
                                             </div>
                                         </div>
+                                        <div class="report-actions">
+                                            <a href="{{ url_for('view_report', report_id=report.id) }}" target="_blank" 
+                                               class="btn btn-sm btn-info me-2">
+                                                <i class="fas fa-eye me-1"></i>查看
+                                            </a>
+                                            <a href="{{ url_for('download_report', report_id=report.id) }}" 
+                                               class="btn btn-sm btn-success">
+                                                <i class="fas fa-download me-1"></i>下載
+                                            </a>
+                                        </div>
                                     </div>
-                                    <div class="report-actions">
-                                        <a href="{{ url_for('view_report', report_id=report.id) }}" target="_blank" 
-                                           class="btn btn-sm btn-info me-2">
-                                            <i class="fas fa-eye me-1"></i>查看
-                                        </a>
-                                        <a href="{{ url_for('download_report', report_id=report.id) }}" 
-                                           class="btn btn-sm btn-success">
-                                            <i class="fas fa-download me-1"></i>下載
-                                        </a>
-                                    </div>
+                                    {% endfor %}
                                 </div>
-                                {% endfor %}
                             </div>
                             {% else %}
                             <div class="no-reports">
@@ -291,6 +302,12 @@
     padding: 2rem;
     border: 1px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.welcome-title {
+    font-size: 1.35rem;
+    font-weight: 600;
+    color: #212529;
 }
 
 .dashboard-stats {
@@ -523,9 +540,9 @@
 
 /* 聊天樣式 */
 .chat-container {
-    background: rgba(255, 255, 255, 0.9);
+    background: #f8f9fa;
     border-radius: 12px;
-    border: 2px solid rgba(0, 0, 0, 0.15);
+    border: 1px solid #e5e5e5;
     height: 800px;
     display: flex;
     flex-direction: column;
@@ -618,10 +635,12 @@
 }
 
 .message-content {
-    max-width: 70%;
+    max-width: 100%;
+    width: 100%;
     padding: 1rem 1.25rem;
-    border-radius: 18px;
+    border-radius: 12px;
     position: relative;
+    box-sizing: border-box;
 }
 
 .user-message .message-content {
@@ -764,6 +783,22 @@
     .info-item {
         padding: 0.75rem;
     }
+
+    /* 手機版聊天區：不另外框起來，與卡片邊留距，訊息占滿寬 */
+    .chat-container {
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        height: 60vh;
+        margin: 0 0.5rem;
+    }
+    .chat-messages {
+        padding: 0.5rem 0;
+    }
+    .chat-input {
+        padding: 0.75rem 0;
+        border-top: 1px solid #eee;
+    }
     
     .report-item {
         padding: 0.75rem;
@@ -773,14 +808,18 @@
         height: 550px;
     }
     
+    /* 手機版訊息一樣佔滿聊天框寬度 */
     .message-content {
-        max-width: 85%;
+        max-width: 100%;
+        width: 100%;
     }
 }
 </style>
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const messageInput = document.getElementById('message-input');
@@ -946,180 +985,33 @@ document.addEventListener('DOMContentLoaded', function() {
         scrollToBottom();
     }
     
-    // 處理 Markdown 格式：將 Markdown 轉換為 HTML
-    function processMarkdown(text) {
+    // 使用函式庫將 Markdown 轉為安全的 HTML
+    function renderMarkdownSafe(text) {
         if (!text) return '';
-        
-        // 先處理 Markdown 粗體和斜體（在表格處理前，但保留原始格式用於表格檢測）
-        // 暫時標記已處理的內容，避免在表格處理時被轉義
-        const processedMap = new Map();
-        let processedText = text;
-        let mapIndex = 0;
-        
-        // 處理粗體 **text**
-        processedText = processedText.replace(/\*\*(.+?)\*\*/g, (match, content) => {
-            const key = `__MARKDOWN_BOLD_${mapIndex}__`;
-            processedMap.set(key, `<strong>${escapeHtml(content)}</strong>`);
-            mapIndex++;
-            return key;
-        });
-        
-        // 處理斜體 *text*
-        processedText = processedText.replace(/\*(.+?)\*/g, (match, content) => {
-            // 避免匹配已經處理過的粗體
-            if (match.startsWith('__MARKDOWN_BOLD_')) return match;
-            const key = `__MARKDOWN_ITALIC_${mapIndex}__`;
-            processedMap.set(key, `<em>${escapeHtml(content)}</em>`);
-            mapIndex++;
-            return key;
-        });
-        
-        // 檢測 Markdown 表格格式
-        const lines = processedText.split('\n');
-        const result = [];
-        let i = 0;
-        
-        while (i < lines.length) {
-            const line = lines[i];
-            
-            // 檢測是否為表格行（包含 | 且至少兩個 |）
-            if (line.includes('|') && (line.match(/\|/g) || []).length >= 2) {
-                // 收集完整的表格
-                const tableLines = [line];
-                i++;
-                
-                // 檢查下一行是否為分隔行（| --- | 或 |:---:| 等）
-                if (i < lines.length && lines[i].includes('|') && /^[\s\|:\-\s]+$/.test(lines[i].replace(/\|/g, ''))) {
-                    tableLines.push(lines[i]);
-                    i++;
+        try {
+            // 啟用 GFM（支援表格等語法）與自動換行
+            if (window.marked) {
+                marked.setOptions({ gfm: true, breaks: true });
+                const rawHtml = marked.parse(text);
+                if (window.DOMPurify) {
+                    return DOMPurify.sanitize(rawHtml);
                 }
-                
-                // 收集表格資料行
-                while (i < lines.length && lines[i].includes('|') && (lines[i].match(/\|/g) || []).length >= 2) {
-                    tableLines.push(lines[i]);
-                    i++;
-                }
-                
-                // 如果有足夠的行數（至少表頭和一行資料），轉換為 HTML 表格
-                if (tableLines.length >= 2) {
-                    // 輔助函數：正確解析表格行（處理首尾的 |）
-                    const parseTableRow = (line) => {
-                        // 去除首尾的空白和 |，然後分割
-                        const trimmed = line.trim();
-                        // 如果首尾都有 |，去除它們
-                        const cleaned = trimmed.startsWith('|') && trimmed.endsWith('|') 
-                            ? trimmed.slice(1, -1) 
-                            : trimmed.startsWith('|') 
-                                ? trimmed.slice(1) 
-                                : trimmed.endsWith('|') 
-                                    ? trimmed.slice(0, -1) 
-                                    : trimmed;
-                        // 分割並過濾空字符串和分隔行
-                        return cleaned.split('|').map(c => c.trim()).filter(c => c && !c.match(/^[\s\-:]+$/));
-                    };
-                    
-                    const headerLine = tableLines[0];
-                    const headers = parseTableRow(headerLine);
-                    
-                    if (headers.length > 0) {
-                        // 建立 HTML 表格
-                        let htmlTable = '<table class="markdown-table"><thead><tr>';
-                        headers.forEach(header => {
-                            // 還原 Markdown 標記
-                            let processedHeader = header;
-                            processedMap.forEach((value, key) => {
-                                processedHeader = processedHeader.replace(key, value);
-                            });
-                            htmlTable += `<th>${processedHeader}</th>`;
-                        });
-                        htmlTable += '</tr></thead><tbody>';
-                        
-                        // 處理資料行（跳過分隔行）
-                        for (let j = 1; j < tableLines.length; j++) {
-                            const dataLine = tableLines[j];
-                            // 跳過分隔行
-                            if (/^[\s\|:\-\s]+$/.test(dataLine.replace(/\|/g, ''))) continue;
-                            
-                            const cells = parseTableRow(dataLine);
-                            // 確保有數據且列數與表頭一致（允許數據列數少於表頭，但不允許多於）
-                            if (cells.length > 0) {
-                                htmlTable += '<tr>';
-                                // 確保欄位數量一致（使用表頭的列數）
-                                for (let k = 0; k < headers.length; k++) {
-                                    let processedCell = cells[k] || '';
-                                    // 還原 Markdown 標記
-                                    processedMap.forEach((value, key) => {
-                                        processedCell = processedCell.replace(key, value);
-                                    });
-                                    htmlTable += `<td>${processedCell}</td>`;
-                                }
-                                htmlTable += '</tr>';
-                            }
-                        }
-                        
-                        htmlTable += '</tbody></table>';
-                        result.push(htmlTable);
-                        continue;
-                    }
-                }
-                
-                // 如果無法轉換，保留原始行（還原 Markdown 標記，不轉義 HTML）
-                tableLines.forEach(l => {
-                    let processedLine = l;
-                    processedMap.forEach((value, key) => {
-                        processedLine = processedLine.replace(key, value);
-                    });
-                    // 轉義未處理的原始文字（但保留已生成的 HTML）
-                    // 由於我們已經用佔位符，這裡只需要處理換行
-                    processedLine = processedLine.replace(/\n/g, '<br>');
-                    result.push(processedLine);
-                });
-            } else {
-                // 非表格行：先還原 Markdown 標記（佔位符 → HTML），然後保護 HTML 標籤並轉義剩餘文字
-                let processedLine = line;
-                // 先還原 Markdown 標記（佔位符 → HTML）
-                processedMap.forEach((value, key) => {
-                    processedLine = processedLine.replace(key, value);
-                });
-                
-                // 保護已生成的 HTML 標籤，轉義其他部分
-                // 使用臨時佔位符保護 HTML 標籤
-                const htmlTagMap = new Map();
-                let htmlIndex = 0;
-                processedLine = processedLine.replace(/<(\/?)(strong|em|b|i|u|p|br|div|span|table|thead|tbody|tr|th|td)([^>]*)>/gi, (match) => {
-                    const key = `__HTML_TAG_${htmlIndex}__`;
-                    htmlTagMap.set(key, match);
-                    htmlIndex++;
-                    return key;
-                });
-                
-                // 轉義剩餘文字
-                processedLine = escapeHtml(processedLine);
-                
-                // 還原 HTML 標籤
-                htmlTagMap.forEach((value, key) => {
-                    processedLine = processedLine.replace(key, value);
-                });
-                
-                processedLine = processedLine.replace(/\n/g, '<br>');
-                result.push(processedLine);
-                i++;
+                return rawHtml;
             }
+            // 若函式庫意外不可用，退回純文字（轉義後顯示）
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/\n/g, '<br>');
+        } catch (e) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/\n/g, '<br>');
         }
-        
-        return result.join('<br>');
     }
     
     // 保留舊函數名稱以向後兼容
     function processMarkdownTables(text) {
-        return processMarkdown(text);
-    }
-    
-    // HTML 轉義函數
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return renderMarkdownSafe(text);
     }
     
     // 添加機器人訊息

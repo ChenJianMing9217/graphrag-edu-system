@@ -494,17 +494,17 @@ def view_report(report_id):
         return redirect(url_for('dashboard'))
     return send_file(report.file_path)
 
-@app.route('/view_child_reports/<int:child_id>')
-@login_required
-def view_child_reports(child_id):
-    if current_user.role != 'therapist':
-        flash('權限不足')
-        return redirect(url_for('dashboard'))
-    child = db.session.get(Child, child_id)
-    if not child:
-        from flask import abort
-        abort(404)
-    return render_template('child_reports.html', child=child)
+# @app.route('/view_child_reports/<int:child_id>')
+# @login_required
+# def view_child_reports(child_id):
+#     if current_user.role != 'therapist':
+#         flash('權限不足')
+#         return redirect(url_for('dashboard'))
+#     child = db.session.get(Child, child_id)
+#     if not child:
+#         from flask import abort
+#         abort(404)
+#     return render_template('child_reports.html', child=child)
 
 # ============================================================================
 # 聊天功能相關函數

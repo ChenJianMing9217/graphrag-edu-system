@@ -8,10 +8,7 @@
         <div class="dashboard-header mb-5">
             <div class="d-flex align-items-center justify-content-between">
                 <div>
-                    <h1 class="display-5 mb-2">
-                        <i class="fas fa-user-md text-primary me-3"></i>早療人員儀錶板
-                    </h1>
-                    <p class="lead text-muted">歡迎回來，{{ current_user.username }}！</p>
+                    <h2 class="welcome-title mb-0">歡迎回來，{{ current_user.username }}！</h2>
                 </div>
                 <div class="dashboard-stats">
                     <div class="stat-card">
@@ -283,10 +280,46 @@
                                     </span>
                                 </td>
                                 <td>
-                                    <a href="{{ url_for('view_child_reports', child_id=child.id) }}" 
-                                       class="btn btn-sm btn-info">
-                                        <i class="fas fa-eye me-1"></i>查看報告
-                                    </a>
+                                    {% set has_reports = (child.reports|length > 0) %}
+                                    {% if has_reports %}
+                                        <!-- 折疊切換按鈕：顯示報告數量 -->
+                                        <button class="btn btn-sm btn-info"
+                                                type="button"
+                                                data-bs-toggle="collapse"
+                                                data-bs-target="#reports-{{ child.id }}"
+                                                aria-expanded="false"
+                                                aria-controls="reports-{{ child.id }}">
+                                            <i class="fas fa-file-pdf me-1"></i>
+                                            報告（{{ child.reports|length }}）
+                                        </button>
+                                
+                                        <!-- 折疊內容：列出所有報告（最新在上） -->
+                                        <div class="collapse mt-2" id="reports-{{ child.id }}">
+                                            <ul class="list-group list-group-flush small">
+                                                {% for report in child.reports|sort(attribute='uploaded_at', reverse=True) %}
+                                                <li class="list-group-item px-0 py-1 d-flex justify-content-between align-items-center">
+                                                    <span>
+                                                        {{ report.uploaded_at.strftime('%Y-%m-%d') }}
+                                                        ・{{ report.original_filename }}
+                                                    </span>
+                                                    <span>
+                                                        <a href="{{ url_for('view_report', report_id=report.id) }}"
+                                                           target="_blank"
+                                                           class="btn btn-sm btn-outline-info me-1">
+                                                            <i class="fas fa-eye"></i>
+                                                        </a>
+                                                        <a href="{{ url_for('download_report', report_id=report.id) }}"
+                                                           class="btn btn-sm btn-outline-success">
+                                                            <i class="fas fa-download"></i>
+                                                        </a>
+                                                    </span>
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
+                                    {% else %}
+                                        <span class="text-muted">尚無報告</span>
+                                    {% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -316,6 +349,12 @@
     padding: 2rem;
     border: 1px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.welcome-title {
+    font-size: 1.35rem;
+    font-weight: 600;
+    color: #212529;
 }
 
 .dashboard-stats {
@@ -418,8 +457,20 @@
         padding: 1rem;
     }
     
+    /* 兒童資料列表：表格拉寬、欄位不換行，可橫向捲動 */
     .table-responsive {
-        font-size: 0.9rem;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        font-size: 0.85rem;
+    }
+    .table-responsive .table {
+        min-width: 560px;
+        table-layout: auto;
+    }
+    .table-responsive .table th,
+    .table-responsive .table td {
+        white-space: nowrap;
+        padding: 0.5rem 0.4rem;
     }
 }
 </style>
