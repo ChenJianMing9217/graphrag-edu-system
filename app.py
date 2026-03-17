@@ -1,15 +1,14 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import text
-import os, json, torch
+import os, json, traceback
 from datetime import datetime
-import numpy as np
 
-# 導入 create_graph_module 的處理流程
-from create_graph_module.process_pdf_to_graph import process_pdf_to_graph
+# 導入 pdf_parser 的處理流程
+from pdf_parser.pdf_processor_main import IEPPipeline
 
 # 導入對話狀態模組
 from dialogue_state_module.embedding import TextEncoder, EncoderConfig, encode_anchors, encode_overview_anchors
@@ -19,12 +18,11 @@ from dialogue_state_module.domain_anchors import load_domain_anchors
 from dialogue_state_module.task_scope_classifier import TaskScopeClassifier
 
 
-# 導入檢索模組（使用新的 DST 基礎規劃器）
-from retrieval_module.dst_based_planner import DSTBasedRetrievalPlanner
-from retrieval_module.retrieval_planner import RetrievalState
-from retrieval_module.graph_client import GraphClient
-from retrieval_module.retrieval_executor import RetrievalExecutor
-from retrieval_module.topic_ontology import default_ontology
+# 導入檢索組件
+from retrieval_module_v2.graph_client import GraphClient
+
+# 導入新的檢索模組 V2
+from retrieval_module_v2 import RetrievalModuleV2
 
 # 導入 LLM 生成模組
 from llm_generate_module import LLMGenerator, LLMConfig, LLMPromptManager
@@ -134,11 +132,11 @@ def init_dst_components():
     try:
         print("[DST] 初始化對話狀態追蹤模組...")
         
-        # Initialize TextEncoder (loads BGE-M3 model internally)
-        encoder_cfg = EncoderConfig(model_name="BAAI/bge-m3")
+        # Initialize TextEncoder (uses external API server)
+        encoder_cfg = EncoderConfig()
         _shared_encoder = TextEncoder(encoder_cfg)
         
-        print("[DST] TextEncoder 已初始化（自動加載 BGE 模型）")
+        print("[DST] TextEncoder 已初始化（對接遠端 Embedding Server）")
         
         # Compute anchor vectors for all domains（從設定檔載入，失敗則用程式內建）
         _domains, _overview_anchors, _domain_anchors = load_domain_anchors()
@@ -219,7 +217,7 @@ def cleanup_inactive_classifiers(max_inactive_hours: int = 24):
 def process_report_after_upload(report_id: int, file_path: str, child_name: str):
     """
     上傳 PDF 後的自動處理流程
-    使用 create_graph_module/process_pdf_to_graph.py 的方式處理 PDF 並插入 Neo4j
+    使用 pdf_parser 模組處理 PDF 並插入 Neo4j
     
     Args:
         report_id: 報告 ID
@@ -233,69 +231,51 @@ def process_report_after_upload(report_id: int, file_path: str, child_name: str)
         # 生成 doc_id
         doc_id = f"report_{report_id}_{child_name.replace(' ', '_')}"
         
-        # 生成 JSON 輸出路徑
-        base, _ = os.path.splitext(file_path)
-        json_output_path = base + "_grouped.json"
+        # 調用 pdf_parser/pdf_processor_main.py 處理 PDF 並插入 Neo4j
+        neo4j_config = {
+            'uri': get_neo4j_uri(),
+            'user': get_neo4j_auth()[0],
+            'password': get_neo4j_auth()[1]
+        }
         
-        # 調用 process_pdf_to_graph 處理 PDF 並插入 Neo4j
-        neo4j_uri = get_neo4j_uri()
-        neo4j_user, neo4j_password = get_neo4j_auth()
+        print(f"[INFO] 開始處理報告 {report_id}，使用 pdf_parser 模組，doc_id: {doc_id}")
         
-        print(f"[INFO] 開始處理報告 {report_id}，doc_id: {doc_id}")
-        result = process_pdf_to_graph(
-            pdf_path=file_path,
-            doc_id=doc_id,
-            neo4j_uri=neo4j_uri,
-            neo4j_user=neo4j_user,
-            neo4j_password=neo4j_password,
-            neo4j_database="neo4j",
-            save_json=True,
-            json_output_path=json_output_path
-        )
+        # 初始化 pipeline
+        # archive_dir 可以根據需要更改，這裡預設為 uploads 目錄旁邊的 json_archives
+        archive_dir = os.path.join(os.path.dirname(file_path), "json_archives")
+        os.makedirs(archive_dir, exist_ok=True)
         
-        if result is None:
-            return False, "PDF 處理失敗：沒有提取到表格資料"
+        pipeline = IEPPipeline(neo4j_config=neo4j_config, archive_dir=archive_dir)
+        
+        # 執行 pipeline (PDF -> JSON -> Neo4j)
+        success = pipeline.run(file_path, child_id=doc_id)
+        
+        if not success:
+            return False, "PDF 處理失敗：IEP Pipeline 執行出錯"
+        
+        # 獲取生成的 JSON 路徑（與 pipeline 中的邏輯一致）
+        # 注意：pipeline.run 內部會生成帶時間戳的檔名，我們這裡嘗試預測或從 archive_dir 找最新的
+        # 或者我們可以假設處理已成功，並依賴資料庫記錄。
         
         # 保存處理結果到資料庫
         # 1. 保存 KnowledgeGraphProcessing 記錄
         kg_processing = KnowledgeGraphProcessing(
             report_id=report_id,
             doc_id=doc_id,
-            total_chunks=result.get('grouped_units_count', 0),
-            total_facets=0,  # process_pdf_to_graph 不返回這個資訊
-            total_relationships=0,  # process_pdf_to_graph 不返回這個資訊
-            neo4j_uri=neo4j_uri,
-            processing_time=result.get('elapsed_seconds', 0),
+            total_chunks=0, # pdf_parser 不直接返回這個計數，設為 0
+            total_facets=0,
+            total_relationships=0,
+            neo4j_uri=neo4j_config['uri'],
+            processing_time=0, # pipeline 不返回時間，設為 0
             status='success',
             error_message=None
         )
         db.session.add(kg_processing)
         
-        # 2. 嘗試從 JSON 檔案讀取 grouped units 來獲取統計資訊
-        if os.path.exists(json_output_path):
-            try:
-                with open(json_output_path, 'r', encoding='utf-8') as f:
-                    grouped_units = json.load(f)
-                    if grouped_units:
-                        # 統計 domains 和 subdomains
-                        domains = set()
-                        subdomains = set()
-                        for unit in grouped_units:
-                            if 'domain' in unit:
-                                domains.add(unit['domain'])
-                            if 'subdomain' in unit:
-                                subdomains.add(unit['subdomain'])
-                        
-                        # 更新統計資訊
-                        kg_processing.total_facets = len(domains)
-                        kg_processing.total_relationships = len(grouped_units)
-            except Exception as e:
-                print(f"[WARNING] 讀取 JSON 檔案失敗: {e}")
-        
         db.session.commit()
         
         print(f"[INFO] 報告 {report_id} 處理完成")
-        return True, f"處理成功！共處理 {result.get('grouped_units_count', 0)} 個功能區塊"
+        return True, "處理成功！已建立知識圖譜"
         
     except Exception as e:
         db.session.rollback()
@@ -474,7 +454,6 @@ def upload_report():
 def download_report(report_id):
     report = db.session.get(Report, report_id)
     if not report:
-        from flask import abort
         abort(404)
     if current_user.role == 'caregiver':
         if report.child.caregiver_id != current_user.id:
@@ -487,31 +466,15 @@ def download_report(report_id):
 def view_report(report_id):
     report = db.session.get(Report, report_id)
     if not report:
-        from flask import abort
         abort(404)
     if current_user.role == 'caregiver' and report.child.caregiver_id != current_user.id:
         flash('權限不足')
         return redirect(url_for('dashboard'))
     return send_file(report.file_path)
 
-# @app.route('/view_child_reports/<int:child_id>')
-# @login_required
-# def view_child_reports(child_id):
-#     if current_user.role != 'therapist':
-#         flash('權限不足')
-#         return redirect(url_for('dashboard'))
-#     child = db.session.get(Child, child_id)
-#     if not child:
-#         from flask import abort
-#         abort(404)
-#     return render_template('child_reports.html', child=child)
-
 # ============================================================================
-# 聊天功能相關函數
+# 對話與檢索相關助手函數
 # ============================================================================
-
-# 已移除：save_dialogue_cache() 函數未使用
-# 對話緩存保存邏輯已整合到 chat() 函數中（line 1111-1134）
 
 def get_doc_id_from_child(child_id: int) -> str:
     """
@@ -695,41 +658,40 @@ def generate_llm_response(
 
 # 全域檢索器（延遲初始化）
 _graph_client = None
-_retrieval_planner = None
-_retrieval_executor = None
+_retrieval_v2 = None
 _bge_model = None
 
 def get_retrieval_components():
-    """獲取檢索相關組件（單例）"""
-    global _graph_client, _retrieval_planner, _retrieval_executor, _bge_model
+    """獲取檢索組件（單例）"""
+    global _graph_client, _retrieval_v2, _bge_model
     if _graph_client is None:
         _graph_client = GraphClient(
             uri=app.config['NEO4J_URI'],
             user=app.config['NEO4J_USER'],
             password=app.config['NEO4J_PASSWORD']
         )
-        # 使用新的 DSTBasedRetrievalPlanner（基於 DST retrieval_action）
-        _retrieval_planner = DSTBasedRetrievalPlanner(ontology=default_ontology)
-        # 使用共用的 BGE-M3 模型（來自 DST 模組的 TextEncoder）
+        
+        # 確保 DST 組件已初始化以獲得 TextEncoder
         try:
-            # 確保 DST 組件已初始化
             init_dst_components()
-            # 使用共用的 TextEncoder 的底層模型
             if _shared_encoder is not None:
-                _bge_model = _shared_encoder._model  # SentenceTransformer 實例
-                print("[RetrievalExecutor] 使用共用的 BGE-M3 模型（來自 DST 模組），將使用 embedding 相似度進行 rerank")
+                _bge_model = _shared_encoder
+                print("[RetrievalV2] 使用共用的 TextEncoder (遠端 API)")
             else:
-                print("[RetrievalExecutor] DST 模組未初始化，將使用 bigram Jaccard 相似度")
                 _bge_model = None
         except Exception as e:
-            print(f"[RetrievalExecutor] BGE-M3 模型載入失敗，將使用 bigram Jaccard 相似度: {e}")
+            print(f"[RetrievalV2] BGE-M3 模型載入失敗: {e}")
             _bge_model = None
-        _retrieval_executor = RetrievalExecutor(_graph_client, bge_model=_bge_model)
-    return _graph_client, _retrieval_planner, _retrieval_executor
+            
+        # 初始化新的檢索模組 V2
+        _retrieval_v2 = RetrievalModuleV2(_graph_client, sql_db=db, text_encoder=_bge_model)
+        print("[RetrievalV2] 檢索模組 V2 已初始化")
+        
+    return _graph_client, _retrieval_v2
 
 @app.route('/api/chat', methods=['POST'])
 @login_required
-def chat():
+def chat(): # 聊天 API - 處理用戶消息並進行對話狀態追蹤
     """
     聊天 API - 處理用戶消息並進行對話狀態追蹤
     
@@ -812,12 +774,18 @@ def chat():
         print(f"  是否延續: {flow_result.topic_analysis.is_continuing}")
         print(f"  主題重疊分數 (MT): {flow_result.topic_analysis.overlap_score:.4f}")
         print(f"  判斷原因: {flow_result.topic_analysis.reason}")
+        is_ambiguous_flow = flow_result.policy_decision.is_ambiguous
         if flow_result.topic_analysis.tv_distance is not None:
             print(f"  TV 距離: {flow_result.topic_analysis.tv_distance:.4f} (0=相同, 1=完全不同)")
-            if flow_result.topic_analysis.tv_distance >= 0.6:
-                print(f"    → TV >= 0.6，判定為強切換，記憶已重置")
+            # 非模糊情境：TV 可作為記憶重置訊號
+            if not is_ambiguous_flow:
+                if flow_result.topic_analysis.tv_distance >= 0.6:
+                    print(f"    → TV >= 0.6，判定為強切換，記憶已重置")
+                else:
+                    print(f"    → TV < 0.6，正常更新記憶（EMA）")
             else:
-                print(f"    → TV < 0.6，正常更新記憶（EMA）")
+                # 高熵「模糊」情境：TV 僅供觀察，是否延續/回退交由 DST 模糊規則決定
+                print(f"    → 高熵模糊狀態，TV 僅供觀察，不作為記憶重置依據")
         if flow_result.topic_analysis.prev_top_domain:
             print(f"  上一輪頂級領域: {flow_result.topic_analysis.prev_top_domain}")
         if flow_result.topic_analysis.cur_top_domain:
@@ -848,7 +816,7 @@ def chat():
                 print(f"  任務分布 (Top 3):")
                 sorted_tasks = sorted(flow_result.task_dist.items(), 
                                      key=lambda x: x[1], reverse=True)[:3]
-                for task, prob in sorted_tasks:
+                for task, prob in sorted(sorted_tasks):
                     print(f"    - {task}: {prob:.4f}")
         else:
             print(f"  任務類型: 未分類")
@@ -906,163 +874,92 @@ def chat():
             "active_domains": flow_result.domain_analysis.active_domains,  # 本輪的活躍領域
             "prev_active_domains": flow_result.topic_analysis.prev_active_domains or [],  # 上一輪的活躍領域
             "fused_distribution_used": flow_result.domain_analysis.fused_distribution is not None,  # DST 是否觸發了模糊延續
+            "detected_region": flow_result.detected_region,  # 偵測到的地區
         }
         
-        # 執行檢索
+        # 執行檢索 (使用 RetrievalModuleV2)
         try:
-            graph_client, retrieval_planner, retrieval_executor = get_retrieval_components()
-            
-            # 獲取或創建檢索狀態
-            retrieval_state_key = f"user_{current_user.id}_child_{child_id}"
-            if not hasattr(app, 'retrieval_states'):
-                app.retrieval_states = {}
-            if retrieval_state_key not in app.retrieval_states:
-                app.retrieval_states[retrieval_state_key] = RetrievalState()
-            retrieval_state = app.retrieval_states[retrieval_state_key]
+            graph_client, retrieval_v2 = get_retrieval_components()
             
             # 獲取 doc_id（從最新的報告中獲取）
             doc_id = get_doc_id_from_child(child_id)
             if not doc_id:
                 raise ValueError(f"找不到兒童 {child_id} 的有效報告 doc_id，請先上傳報告")
             
-            # 規劃檢索策略
-            retrieval_plan = retrieval_planner.plan(
-                user_query=user_message,
+            # 直接調用 V2 檢索入口
+            # retrieve 內部會自動處理 Strategy Mapping -> Execution -> Reranking
+            candidates = retrieval_v2.retrieve(
                 turn_state=turn_state,
-                retrieval_state=retrieval_state,
+                user_query=user_message,
                 doc_id=str(doc_id)
             )
             
-            # 印出檢索計劃詳情
             print("\n" + "=" * 80)
-            print("[檢索計劃]")
+            print(f"[RetrievalModuleV2] 檢索完成，找到 {len(candidates)} 個候選節點")
             print("=" * 80)
-            print(f"檢索動作: {retrieval_plan.routing_action}")
-            print(f"模式: {retrieval_plan.mode.value}")
-            print(f"主題策略: {retrieval_plan.topic_policy.value}")
-            print(f"主題列表: {retrieval_plan.topics}")
-            print(f"使用 Section 類型: {retrieval_plan.use_sections}")
-            print(f"Section 權重: {retrieval_plan.section_type_weights}")
-            print(f"總 K: {retrieval_plan.k_items}")
-            
-            # 印出兩層分配結果
-            if hasattr(retrieval_plan, 'two_level_quota') and retrieval_plan.two_level_quota:
-                print("\n【兩層分配結果】")
-                for subdomain, section_quota in retrieval_plan.two_level_quota.items():
-                    print(f"  {subdomain}:")
-                    total_subdomain_quota = sum(section_quota.values())
-                    for sec_type, quota in section_quota.items():
-                        print(f"    - {sec_type}: {quota} 個")
-                    print(f"    小計: {total_subdomain_quota} 個")
-            else:
-                print("\n【單層分配結果】")
-                if retrieval_plan.topic_alloc:
-                    for topic, quota in retrieval_plan.topic_alloc.items():
-                        print(f"  {topic}: {quota} 個")
-            
-            # 印出決策原因
-            if retrieval_plan.plan_decision_trace:
-                trace = retrieval_plan.plan_decision_trace
-                print("\n【決策追蹤】")
-                print(f"  主題來源: {trace.topics_source}")
-                print(f"  模式原因: {trace.mode_reason}")
-                print(f"  策略原因: {trace.policy_reason}")
-                print(f"  配額原因: {trace.quota_reason}")
-                print(f"  Section 權重原因: {trace.section_weight_reason}")
-            
-            # 印出所有原因
-            if retrieval_plan.reasons:
-                print("\n【詳細原因】")
-                for reason in retrieval_plan.reasons:
-                    print(f"  - {reason}")
-            
-            # 檢查是否需要回退記憶狀態（當檢索規劃器使用上一輪領域時）
-            # 條件：entropy >= 0.8 且 DST 未觸發模糊延續，且檢索規劃器完全使用了上一輪領域（不包含本輪 top_domain）
-            prev_active_domains = flow_result.topic_analysis.prev_active_domains or []
-            normalized_entropy = flow_result.domain_analysis.entropy
-            fused_distribution_used = flow_result.domain_analysis.fused_distribution is not None
-            top_domain = flow_result.domain_analysis.top_domain
-            
-            if (normalized_entropy >= 0.8 and 
-                not fused_distribution_used and 
-                prev_active_domains and 
-                flow_result.turn_index > 0):
-                # 檢查檢索規劃器是否完全使用了上一輪領域（topics 是 prev_active_domains 的子集，且不包含本輪 top_domain）
-                retrieval_topics_set = set(retrieval_plan.topics)
-                prev_active_set = set(prev_active_domains)
-                
-                # 如果檢索主題完全來自上一輪領域（是 prev_active_domains 的子集），且不包含本輪 top_domain，則回退記憶狀態
-                # 這表示檢索規劃器認為應該完全延續上一輪領域，而不是合併
-                if (retrieval_topics_set.issubset(prev_active_set) and 
-                    top_domain not in retrieval_topics_set and
-                    len(retrieval_topics_set) > 0):
-                    # 回退記憶狀態（類似 DST 觸發模糊延續時的處理）
-                    prev_dist = flow_result.topic_analysis.prev_dist
-                    if prev_dist:
-                        classifier.topic_tracker.state.memory_dist = dict(prev_dist)
-                        classifier.topic_tracker.state.prev_dist = dict(prev_dist)
-                        classifier.topic_tracker.state.prev_active_domains = list(prev_active_domains)
-                        print(f"\n[檢索規劃器記憶回退] entropy={normalized_entropy:.4f} >= 0.8，檢索完全使用了上一輪領域 {retrieval_plan.topics}（不包含本輪 top_domain={top_domain}），回退記憶狀態")
-                        print(f"  - 回退 prev_active_domains: {prev_active_domains}")
-                        print(f"  - 回退 prev_dist top3: {sorted(prev_dist.items(), key=lambda x: x[1], reverse=True)[:3]}")
-            
-            print("=" * 80)
-            
-            # 執行檢索
-            retrieval_result = retrieval_executor.execute(
-                plan=retrieval_plan,
-                doc_id=str(doc_id),
-                user_query=user_message,
-                assistant_anchor=""  # TODO: 從上一輪獲取
-            )
-            
-            # 更新檢索狀態
-            if retrieval_plan.topics:
-                retrieval_state.active_topics = retrieval_plan.topics.copy()
-            
-            # 印出檢索結果詳情
-            print("\n" + "=" * 80)
-            print("[檢索結果]")
-            print("=" * 80)
-            candidates = retrieval_result.get('candidates', [])
-            print(f"找到 {len(candidates)} 個候選")
-            print(f"Sections: {len(retrieval_result.get('sections', []))} 個")
-            print(f"Items: {len(retrieval_result.get('items', []))} 個")
             
             if candidates:
-                print("\n【Top 候選結果】")
-                for i, candidate in enumerate(candidates[:5], 1):  # 只顯示前 5 個
-                    path = candidate.get('path', {})
-                    print(f"\n  {i}. 分數: {candidate.get('score', 0.0):.4f}")
-                    print(f"     Subdomain: {path.get('subdomain', 'N/A')}")
-                    print(f"     Section 類型: {path.get('section_type', 'N/A')}")
-                    print(f"     Section 名稱: {path.get('section_name', 'N/A')}")
-                    print(f"     文本: {candidate.get('text', '')[:100]}...")
-                    if candidate.get('sim_q'):
-                        print(f"     查詢相似度: {candidate.get('sim_q', 0.0):.4f}")
-                    if candidate.get('sim_anchor'):
-                        print(f"     上下文相似度: {candidate.get('sim_anchor', 0.0):.4f}")
+                print("\n【全部檢索到的內容 (按分數排序)】")
+                for i, c in enumerate(candidates, 1):
+                    # 印出完整或較長內容以便除錯
+                    print(f"  {i}. [Score: {c.score:.4f}] [{c.label}]")
+                    # 將內容縮進並印出
+                    indented_text = c.text.replace("\n", "\n      ")
+                    print(f"      {indented_text}")
+                    print("-" * 40)
+            
+            print("=" * 80 + "\n")
+            
+            # 轉換為 LLM 可用的 context 格式 (保持向後兼容)
+            retrieved_context = []
+            for c in candidates:
+                retrieved_context.append({
+                    "text": c.text,
+                    "score": c.score,
+                    "label": c.label,
+                    "id": c.node_id,
+                    "path": {
+                        "subdomain": c.properties.get("subdomain", ""),
+                        "category": c.properties.get("category", "")
+                    }
+                })
             
             print("=" * 80 + "\n")
             
             # 構建對話歷史（從資料庫獲取最近的對話）
             # 判斷是否需要跳過對話歷史：
-            # 1. 記憶重置：TV 距離 >= 0.6 或 semantic_flow == "shift_hard" 或 reason 包含 "mem_reset"
+            # 1. 記憶重置：
+            #    - 非模糊情況下：TV 距離 >= 0.6 或 reason 包含 "mem_reset"
+            #    - 無論是否模糊：semantic_flow == "shift_hard"
             # 2. 主題延續轉換：從 continue → shift_soft/shift_hard 或 shift_soft → shift_hard
             should_skip_history = False
             skip_reason = ""
             
             # 檢查記憶重置
             is_memory_reset = False
-            if flow_result.topic_analysis.tv_distance is not None and flow_result.topic_analysis.tv_distance >= 0.6:
+            is_ambiguous_flow = flow_result.policy_decision.is_ambiguous
+
+            # TV / mem_reset 僅在「非模糊」情況下視為記憶重置訊號
+            if (
+                not is_ambiguous_flow
+                and flow_result.topic_analysis.tv_distance is not None
+                and flow_result.topic_analysis.tv_distance >= 0.6
+            ):
                 is_memory_reset = True
-                skip_reason = f"記憶重置（TV 距離={flow_result.topic_analysis.tv_distance:.4f} >= 0.6）"
+                skip_reason = (
+                    f"記憶重置（TV 距離={flow_result.topic_analysis.tv_distance:.4f} >= 0.6）"
+                )
             elif flow_result.policy_decision.semantic_flow == "shift_hard":
                 is_memory_reset = True
                 skip_reason = "記憶重置（semantic_flow=shift_hard）"
-            elif "mem_reset" in flow_result.topic_analysis.reason:
+            elif (
+                not is_ambiguous_flow
+                and "mem_reset" in (flow_result.topic_analysis.reason or "")
+            ):
                 is_memory_reset = True
-                skip_reason = f"記憶重置（reason 包含 mem_reset: {flow_result.topic_analysis.reason}）"
+                skip_reason = (
+                    f"記憶重置（reason 包含 mem_reset: {flow_result.topic_analysis.reason}）"
+                )
             
             # 檢查主題延續轉換（需要讀取上一輪的 semantic_flow）
             is_topic_continuation_shift = False
@@ -1118,7 +1015,7 @@ def chat():
             print("[LLM] 開始生成回應...")
             bot_response = generate_llm_response(
                 user_query=user_message,
-                retrieved_context=candidates,
+                retrieved_context=retrieved_context,
                 conversation_history=conversation_history,
                 semantic_flow=flow_result.policy_decision.semantic_flow,
                 retrieval_action=flow_result.policy_decision.retrieval_action,
@@ -1134,11 +1031,10 @@ def chat():
             print(f"[LLM] 回應生成完成（長度：{len(bot_response)} 字元）")
             
             # 在回應尾端添加引用標註
-            bot_response = add_citation_boxes(bot_response, candidates)
+            bot_response = add_citation_boxes(bot_response, retrieved_context)
             
         except Exception as e:
             print(f"[檢索錯誤] {e}")
-            import traceback
             traceback.print_exc()
             # Fallback: 使用 LLM 生成回應（沒有檢索上下文）
             try:
@@ -1231,7 +1127,6 @@ def chat():
             print(f"[CACHE] 已保存完整分析結果到對話緩存 (Turn {flow_result.turn_index})")
         except Exception as e:
             print(f"[CACHE] 保存對話緩存失敗: {e}")
-            import traceback
             traceback.print_exc()
         
         return jsonify({
@@ -1249,7 +1144,6 @@ def chat():
     
     except Exception as e:
         print(f"[ERROR] /api/chat 錯誤: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -1298,17 +1192,17 @@ def reset_chat():
         except Exception as e:
             print(f"[RESET] 刪除對話狀態文件失敗: {e}")
         
-        # 3. 刪除資料庫中的對話紀錄
-        try:
-            deleted_count = ChatMessage.query.filter_by(
-                user_id=current_user.id,
-                child_id=child_id
-            ).delete()
-            db.session.commit()
-            print(f"[RESET] 已刪除 {deleted_count} 條對話紀錄")
-        except Exception as e:
-            db.session.rollback()
-            print(f"[RESET] 刪除對話紀錄失敗: {e}")
+        # 3. 刪除資料庫中的對話紀錄 (用戶要求保留紀錄，不再刪除 MySQL 資料)
+        # try:
+        #     deleted_count = ChatMessage.query.filter_by(
+        #         user_id=current_user.id,
+        #         child_id=child_id
+        #     ).delete()
+        #     db.session.commit()
+        #     print(f"[RESET] 已保留 {deleted_count} 條對話紀錄 (不從資料庫刪除)")
+        # except Exception as e:
+        #     db.session.rollback()
+        #     print(f"[RESET] 操作資料庫失敗: {e}")
         
         # 4. 刪除對話緩存文件
         try:
@@ -1321,11 +1215,8 @@ def reset_chat():
         
         # 5. 重置檢索狀態
         try:
-            if hasattr(app, 'retrieval_states'):
-                retrieval_state_key = f"{current_user.id}_{child_id}"
-                if retrieval_state_key in app.retrieval_states:
-                    app.retrieval_states[retrieval_state_key] = RetrievalState()
-                    print(f"[RESET] 已重置檢索狀態")
+            # 已移除舊版 RetrievalState 引用
+            pass
         except Exception as e:
             print(f"[RESET] 重置檢索狀態失敗: {e}")
         
@@ -1336,7 +1227,6 @@ def reset_chat():
     
     except Exception as e:
         print(f"[ERROR] /api/chat/reset 錯誤: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -1374,29 +1264,55 @@ def get_chat_history():
         if not child or (child.caregiver_id != current_user.id and child.therapist_id != current_user.id):
             return jsonify({"error": "無權訪問此兒童"}), 403
         
-        # 查詢此用戶/兒童的所有消息
-        messages = ChatMessage.query.filter_by(
-            user_id=current_user.id,
-            child_id=child_id
-        ).order_by(ChatMessage.sent_at.asc()).all()
-        
-        # 格式化回應
+        # 從對話緩存 JSON 讀取歷史
+        cache_file = os.path.join(DIALOGUE_CACHE_DIR, f"user_{current_user.id}_child_{child_id}_dialogue.json")
         history = []
-        for msg in messages:
-            msg_data = {
-                "id": msg.id,
-                "message": msg.message,
-                "is_user_message": msg.is_user_message,
-                "sent_at": msg.sent_at.isoformat() if msg.sent_at else None
-            }
-            
-            # 添加對話狀態和檢索信息（如果有）
-            if msg.flow_state:
-                msg_data["flow_state"] = json.loads(msg.flow_state)
-            if msg.retrieval_info:
-                msg_data["retrieval_info"] = json.loads(msg.retrieval_info)
-            
-            history.append(msg_data)
+        
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+                
+                # 將緩存中的「回合（Turn）」平坦化為「消息（Message）」格式
+                for i, entry in enumerate(cache_data):
+                    sent_at = entry.get("timestamp")
+                    dst = entry.get("dst_analysis", {})
+                    
+                    # 1. 加入用戶消息
+                    user_msg = {
+                        "id": i * 2,
+                        "message": entry.get("user_message", ""),
+                        "is_user_message": True,
+                        "sent_at": sent_at,
+                        "flow_state": {
+                            "domain": dst.get("domain_analysis", {}).get("top_domain"),
+                            "normalized_entropy": dst.get("domain_analysis", {}).get("entropy"),
+                            "context_similarity": dst.get("context_analysis", {}).get("similarity_score"),
+                            "is_continuing": dst.get("topic_analysis", {}).get("is_continuing"),
+                            "semantic_flow": dst.get("policy_decision", {}).get("semantic_flow"),
+                            "retrieval_action": dst.get("policy_decision", {}).get("retrieval_action")
+                        },
+                        "retrieval_info": {
+                            "flow_type": dst.get("policy_decision", {}).get("semantic_flow"),
+                            "retrieval_action": dst.get("policy_decision", {}).get("retrieval_action"),
+                            "context_level": dst.get("policy_decision", {}).get("context_level")
+                        }
+                    }
+                    history.append(user_msg)
+                    
+                    # 2. 加入機器人回應
+                    bot_msg = {
+                        "id": i * 2 + 1,
+                        "message": entry.get("bot_response", ""),
+                        "is_user_message": False,
+                        "sent_at": sent_at, # 緩存中通常只有一個時間，這裡沿用
+                        "flow_state": None,
+                        "retrieval_info": None
+                    }
+                    history.append(bot_msg)
+            except Exception as e:
+                print(f"[ERROR] 讀取對話緩存失敗: {e}")
+                # 讀取失敗則返回空列表，避免崩潰
         
         return jsonify({"messages": history}), 200
     
@@ -1417,7 +1333,6 @@ if __name__ == '__main__':
             print("=" * 60)
         except Exception as e:
             print(f"[FATAL] DST 初始化失敗: {e}")
-            import traceback
             traceback.print_exc()
             print("=" * 60)
             raise  # Re-raise to stop the app

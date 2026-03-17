@@ -12,8 +12,13 @@ from .embedding import TextEncoder, score_overview_similarity
 from .domain_router import DomainRouter, DomainResult
 from .context_similarity import ContextSimilarity, ContextSimConfig
 from .multi_topic_tracker import MultiTopicTracker, MultiTopicConfig
-from .dst_policy import DSTPolicyConfig, decide_policy, action_to_predicted_flow
+from .dst_policy import DSTPolicyConfig, decide_policy
 from .task_scope_classifier import TaskScopeClassifier, PredictResult
+from .utils.region_extractor import extract_region
+
+
+# 控制 DST 模組是否輸出詳細除錯訊息
+DST_DEBUG_VERBOSE: bool = True
 
 
 # ============================================================================
@@ -21,8 +26,7 @@ from .task_scope_classifier import TaskScopeClassifier, PredictResult
 # ============================================================================
 
 @dataclass
-class DomainAnalysis:
-    """領域分析結果"""
+class DomainAnalysis: # 領域分析結果
     top_domain: str
     top_prob: float
     entropy: float
@@ -36,16 +40,14 @@ class DomainAnalysis:
 
 
 @dataclass
-class ContextAnalysis:
-    """上下文相似度分析"""
+class ContextAnalysis: # 上下文相似度分析
     similarity_score: float  # C
     source: str  # "first_turn" | "prev_user" | "prev_bot"
     is_first_turn: bool
 
 
 @dataclass
-class TopicAnalysis:
-    """主題延續分析"""
+class TopicAnalysis: # 主題延續分析
     is_continuing: bool
     overlap_score: float  # MT
     reason: str
@@ -54,11 +56,12 @@ class TopicAnalysis:
     prev_dist: Optional[Dict[str, float]] = None  # 上一輪的領域分布（更新前）
     prev_active_domains: Optional[List[str]] = None  # 上一輪的活躍領域列表（更新前）
     tv_distance: Optional[float] = None  # TV 距離（Total Variation Distance）
+    active_domain_coverage: Optional[float] = None  # active_domains Jaccard 覆蓋度
+    continuation_mode: Optional[str] = None  # "strong" | "soft" | "shift"
 
 
 @dataclass
-class PolicyDecision:
-    """策略決策結果（簡化版：移除 D_level）"""
+class PolicyDecision: # 策略決策結果
     context_level: str  # "high" | "low"
     is_ambiguous: bool
     policy_case: str  # e.g., "CH_MTH_NARROW_MD"
@@ -67,8 +70,7 @@ class PolicyDecision:
 
 
 @dataclass
-class FlowResult:
-    """完整的語義流程分析結果"""
+class FlowResult: # 完整的語義流程分析結果
     turn_index: int
     
     # 三層分析
@@ -82,9 +84,9 @@ class FlowResult:
     task_dist: Optional[Dict[str, float]] = None
     scope_label: Optional[str] = None
     scope_dist: Optional[Dict[str, float]] = None
+    detected_region: Optional[str] = None  # 偵測到的地區（如：台北市）
 
-    def to_dict(self) -> dict:
-        """轉換為字典格式（完整分析結果）"""
+    def to_dict(self) -> dict: # 轉換為字典格式（完整分析結果）
         result = {
             "turn_index": self.turn_index,
             "domain_analysis": {
@@ -131,6 +133,9 @@ class FlowResult:
         if self.scope_dist:
             result["scope_dist"] = {k: float(v) for k, v in self.scope_dist.items()}
         
+        if self.detected_region:
+            result["detected_region"] = self.detected_region
+        
         # 添加融合後的分布（如果存在）
         if self.domain_analysis.fused_distribution:
             result["domain_analysis"]["fused_distribution"] = {
@@ -145,12 +150,10 @@ class FlowResult:
         
         return result
 
-    def to_json(self) -> str:
-        """轉換為 JSON 字符串"""
+    def to_json(self) -> str: # 轉換為 JSON 字符串
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
 
-    def __str__(self) -> str:
-        """簡潔的文本表示"""
+    def __str__(self) -> str: # 簡潔的文本表示
         lines = [
             f"[Turn {self.turn_index}] {self.policy_decision.semantic_flow.upper()} | "
             f"{self.policy_decision.retrieval_action}",
@@ -165,6 +168,8 @@ class FlowResult:
             lines.append(f"  Task: {self.task_label}")
         if self.scope_label:
             lines.append(f"  Scope: {self.scope_label}")
+        if self.detected_region:
+            lines.append(f"  Region: {self.detected_region}")
         return "\n".join(lines)
 
 
@@ -172,7 +177,7 @@ class FlowResult:
 # 主分類器
 # ============================================================================
 
-class SemanticFlowClassifier:
+class SemanticFlowClassifier: # 語義流程分類器
     """
     語義流程分類器 - 整合多個模組進行對話狀態追蹤
     
@@ -270,7 +275,7 @@ class SemanticFlowClassifier:
             print(f"[DST] 保存狀態失敗: {e}")
             return False
     
-    def load_state(self, user_id: int, child_id: int, state_dir: str = "dialogue_states") -> bool:
+    def load_state(self, user_id: int, child_id: int, state_dir: str = "dialogue_states") -> bool: # 載入前一輪的對話狀態
         """
         從文件加載對話狀態
         
@@ -283,7 +288,7 @@ class SemanticFlowClassifier:
             是否成功加載
         """
         try:
-            from .state_persistence import load_dialogue_state
+            from .state_persistence import load_dialogue_state # 載入前一輪的對話狀態
             result = load_dialogue_state(
                 user_id, child_id,
                 self.context_similarity,
@@ -300,8 +305,7 @@ class SemanticFlowClassifier:
             print(f"[DST] 加載狀態失敗: {e}")
             return False
 
-    def _analyze_domain(self, user_query: str) -> DomainAnalysis:
-        """領域分析"""
+    def _analyze_domain(self, user_query: str) -> DomainAnalysis: # 以本輪使用者的訊息來判斷領域
         dr: DomainResult = self.domain_router.predict(user_query)
         
         return DomainAnalysis(
@@ -314,8 +318,7 @@ class SemanticFlowClassifier:
             is_multi_domain=len(dr.active_domains) >= 2,
         )
 
-    def _analyze_context(self, user_query: str) -> ContextAnalysis:
-        """上下文相似度分析"""
+    def _analyze_context(self, user_query: str) -> ContextAnalysis: # 計算本輪與前一輪的語義相似度
         if self.turn_index == 0:
             C_info = {
                 "C": self.context_similarity.cfg.neutral_first_turn,
@@ -333,13 +336,13 @@ class SemanticFlowClassifier:
             is_first_turn=(self.turn_index == 0),
         )
 
-    def _analyze_topic(
+    def _analyze_topic( # 判斷本輪是否為主題延續
         self, 
         domain_dist: Dict[str, float], 
         top_domain: str, 
         cur_active_domains: List[str],
+        is_ambiguous: bool,
     ) -> TopicAnalysis:
-        """主題延續分析"""
         # 在更新之前保存上一輪的分布和活躍領域（用於模糊延續）
         prev_dist_before_update = dict(self.topic_tracker.state.prev_dist) if self.topic_tracker.state.prev_dist else None
         prev_active_domains_before_update = list(self.topic_tracker.state.prev_active_domains) if self.topic_tracker.state.prev_active_domains else None
@@ -350,6 +353,7 @@ class SemanticFlowClassifier:
             confidence=0.0,  # 不再使用 confidence，傳入 0.0 保持接口兼容
             cur_active_domains=cur_active_domains,
             prev_active_domains=self.topic_tracker.state.prev_active_domains,
+            is_ambiguous=is_ambiguous,
         )
         
         return TopicAnalysis(
@@ -361,172 +365,112 @@ class SemanticFlowClassifier:
             prev_dist=prev_dist_before_update,  # 保存更新前的上一輪分布
             prev_active_domains=prev_active_domains_before_update,  # 保存更新前的上一輪活躍領域
             tv_distance=topic_info.get("tv_distance"),  # TV 距離
+            active_domain_coverage=topic_info.get("active_domain_coverage"),
+            continuation_mode=topic_info.get("continuation_mode"),
         )
 
-    def _get_all_domains(self) -> List[str]:
-        """
-        獲取所有領域列表
-        
-        Returns:
-            List[str]: 所有領域名稱列表
-        """
+    def _get_all_domains(self) -> List[str]: # 取得所有領域列表
         from .domain_anchors import DOMAINS
         return DOMAINS.copy()
     
-    def _get_memory_domains(self) -> Dict[str, float]:
-        """
-        獲取記憶中的領域分布
-        
-        Returns:
-            Dict[str, float]: 記憶中的領域分布
-        """
-        return dict(self.topic_tracker.state.memory_dist) if self.topic_tracker.state.memory_dist else {}
+    def _get_overview_distribution(self) -> Dict[str, float]: # 取得整體查詢時的領域分布
+        all_domains = self._get_all_domains()
+        return {d: 1.0 / len(all_domains) for d in all_domains}
     
-    def _get_overview_distribution(
+    def _analyze_overview_query(
         self,
         domain: DomainAnalysis,
-        strategy: str = "memory"
-    ) -> Dict[str, float]:
+        user_query: str,
+        is_ambiguous: bool,
+    ) -> Tuple[bool, float]:
         """
-        獲取整體查詢時的領域分布
-        
-        Args:
-            domain: 領域分析結果
-            strategy: 策略
-                - "all": 所有領域均勻分布
-                - "memory": 使用記憶中的領域（memory_dist）
-                - "active": 使用當前活躍領域（active_domains）
-                - "hybrid": 混合策略（記憶 + 當前活躍）
-        
-        Returns:
-            Dict[str, float]: 整體查詢時的領域分布
+        判斷本輪是否為「整體查詢」，並在需要時建立 overview_distribution。
+        只負責整體相關訊號與分布，不處理記憶或模糊延續。
         """
-        if strategy == "all":
-            # 所有領域均勻分布
-            all_domains = self._get_all_domains()
-            return {d: 1.0 / len(all_domains) for d in all_domains}
-        
-        elif strategy == "memory":
-            # 使用記憶中的領域
-            mem_dist = self._get_memory_domains()
-            if mem_dist:
-                # 過濾掉機率太低的領域（< 0.05）
-                filtered = {d: prob for d, prob in mem_dist.items() if prob >= 0.05}
-                if filtered:
-                    # 重新正規化
-                    total = sum(filtered.values())
-                    return {d: v / total for d, v in filtered.items()}
-            # 如果記憶為空，回退到所有領域
-            all_domains = self._get_all_domains()
-            return {d: 1.0 / len(all_domains) for d in all_domains}
-        
-        elif strategy == "active":
-            # 使用當前活躍領域
-            if domain.active_domains:
-                return {d: 1.0 / len(domain.active_domains) for d in domain.active_domains}
-            # 如果沒有活躍領域，回退到所有領域
-            all_domains = self._get_all_domains()
-            return {d: 1.0 / len(all_domains) for d in all_domains}
-        
-        elif strategy == "hybrid":
-            # 混合策略：記憶 + 當前活躍
-            mem_dist = self._get_memory_domains()
-            active_set = set(domain.active_domains) if domain.active_domains else set()
-            
-            # 合併領域
-            combined_domains = set()
-            if mem_dist:
-                combined_domains.update([d for d, prob in mem_dist.items() if prob >= 0.05])
-            combined_domains.update(active_set)
-            
-            if combined_domains:
-                # 計算權重：記憶領域權重 0.6，活躍領域權重 0.4
-                overview_dist = {}
-                for d in combined_domains:
-                    mem_weight = mem_dist.get(d, 0.0) * 0.6 if mem_dist else 0.0
-                    active_weight = (1.0 / len(active_set) * 0.4) if d in active_set and active_set else 0.0
-                    overview_dist[d] = mem_weight + active_weight
-                
-                # 重新正規化
-                total = sum(overview_dist.values())
-                if total > 0:
-                    return {d: v / total for d, v in overview_dist.items()}
-            
-            # 如果合併後為空，回退到所有領域
-            all_domains = self._get_all_domains()
-            return {d: 1.0 / len(all_domains) for d in all_domains}
-        
-        else:
-            # 默認：所有領域
-            all_domains = self._get_all_domains()
-            return {d: 1.0 / len(all_domains) for d in all_domains}
-    
-    def _decide_policy(
-        self,
-        domain: DomainAnalysis,
-        context: ContextAnalysis,
-        topic: TopicAnalysis,
-        user_query: str,  # 新增參數：用於檢測整體查詢
-    ) -> PolicyDecision:
-        """決策層"""
-        from .dst_policy import compute_MT, predicted_flow_from_C_MT
-        
-        # 初始化調整後的參數
-        adjusted_topic_continue = topic.is_continuing
-        adjusted_topic_overlap = topic.overlap_score
-        fused_distribution = None  # 記錄融合後的分布（若有）
-        
-        # 是否模糊（需先算，整體僅在「模糊」時才依向量／上一輪整體判定）
-        is_ambiguous = self.policy_cfg.enable_ambiguous_continuation and (domain.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th)
-        
-        # 整體查詢：僅當「模糊」且（向量像整體 或 上一輪是整體）才判為整體
         overview_sim = 0.0
         if self._overview_anchor_vecs:
             query_vec = self.text_encoder.encode(user_query)
             overview_sim = score_overview_similarity(query_vec, self._overview_anchor_vecs)
         is_overview_by_vector = overview_sim >= self._overview_sim_threshold
         is_overview_query = is_ambiguous and (is_overview_by_vector or self._prev_was_overview)
-        if is_overview_query:
-            print(f"  [整體查詢] 模糊且(向量像整體或上輪整體) → 判定為整體 (ambiguous={is_ambiguous}, sim={overview_sim:.3f}, prev_was_overview={self._prev_was_overview})")
+        if is_overview_query and DST_DEBUG_VERBOSE:
+            print(
+                f"  [整體查詢] 模糊且(向量像整體或上輪整體) → 判定為整體 "
+                f"(ambiguous={is_ambiguous}, sim={overview_sim:.3f}, prev_was_overview={self._prev_was_overview})"
+            )
         
         domain.is_overview_query = is_overview_query
-        overview_dist = None  # 需要時再算
+        overview_dist = None
         
         # 若本輪為整體或需沿用整體：生成整體領域分布
-        if is_overview_query or (self.policy_cfg.enable_ambiguous_continuation and domain.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th and self._prev_was_overview):
-            overview_dist = self._get_overview_distribution(domain, strategy="all")
+        if is_overview_query or (
+            self.policy_cfg.enable_ambiguous_continuation
+            and domain.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th
+            and self._prev_was_overview
+        ):
+            overview_dist = self._get_overview_distribution()
             domain.overview_distribution = overview_dist
-            if is_overview_query:
-                print(f"  [整體查詢] 整體分布 top5: {sorted(overview_dist.items(), key=lambda x: x[1], reverse=True)[:5]}")
+            if is_overview_query and DST_DEBUG_VERBOSE:
+                print(
+                    "[整體查詢] 整體分布 top5: "
+                    f"{sorted(overview_dist.items(), key=lambda x: x[1], reverse=True)[:5]}"
+                )
+        
+        return is_overview_query, float(overview_sim)
+    
+    def _handle_memory_and_fused_distribution(
+        self,
+        domain: DomainAnalysis,
+        topic: TopicAnalysis,
+        is_ambiguous: bool,
+        is_overview_query: bool,
+    ) -> Tuple[bool, float, Optional[Dict[str, float]]]:
+        """
+        根據已蒐集的訊號（模糊 / 整體 / topic 狀態）決定：
+        - 是否觸發整體重啟（規則 A）或整體沿用（規則 B）
+        - 是否進行模糊延續並覆寫 topic_continue / topic_overlap
+        - 本輪要使用的 fused_distribution（若有）
+        
+        注意：這裡可以在特殊情況下重置或回退 MultiTopicTracker 的記憶，
+        讓所有記憶相關 side-effect 集中在同一個函式中處理。
+        """
+        adjusted_topic_continue = topic.is_continuing
+        adjusted_topic_overlap = topic.overlap_score
+        fused_distribution: Optional[Dict[str, float]] = None
         
         # 規則 A：模糊且整體且上一輪不是整體 → 整體、清除記憶、新對話
         if is_ambiguous and is_overview_query and not self._prev_was_overview:
             domain.is_overview_query = True
             if domain.overview_distribution is None:
-                domain.overview_distribution = self._get_overview_distribution(domain, strategy="all")
+                domain.overview_distribution = self._get_overview_distribution()
             fused_distribution = dict(domain.overview_distribution)
             domain.fused_distribution = fused_distribution
             self.topic_tracker.reset()
-            print(f"  [整體查詢] 規則A：模糊+整體，清除記憶、啟用新對話")
-            # 跳過下方一般模糊延續，直接到決策與 fused 寫入
+            if DST_DEBUG_VERBOSE:
+                print("  [整體查詢] 規則A：模糊+整體，清除記憶、啟用新對話")
+        
         # 規則 B：模糊且上一輪是整體 → 整體、有記憶（沿用整體分布）
         elif is_ambiguous and self._prev_was_overview:
             domain.is_overview_query = True
             if domain.overview_distribution is None:
-                domain.overview_distribution = self._get_overview_distribution(domain, strategy="all")
+                domain.overview_distribution = self._get_overview_distribution()
             fused_distribution = dict(domain.overview_distribution)
             domain.fused_distribution = fused_distribution
-            print(f"  [整體查詢] 規則B：模糊+上一輪整體，判定為整體、有記憶")
+            if DST_DEBUG_VERBOSE:
+                print("  [整體查詢] 規則B：模糊+上一輪整體，判定為整體、有記憶")
+        
         # 一般模糊延續：模糊且上一輪有領域、非整體情境
         elif self.policy_cfg.enable_ambiguous_continuation and not is_overview_query:
             # 使用 topic.prev_top_domain（這是更新前的值，真正的上一輪領域）
-            # 而不是 self.topic_tracker.state.prev_raw_top_domain（已經被更新為當前輪）
             prev_top_domain = topic.prev_top_domain
             
-            # 調試輸出
-            if self.turn_index > 0:
+            # 調試輸出（僅在 verbose 模式下啟用）
+            if self.turn_index > 0 and DST_DEBUG_VERBOSE:
                 print(f"[模糊延續調試] Turn {self.turn_index}:")
-                print(f"  - is_ambiguous: {is_ambiguous} (entropy={domain.entropy:.4f} >= {self.policy_cfg.ambiguous_continuation_entropy_th})")
+                print(
+                    f"  - is_ambiguous: {is_ambiguous} "
+                    f"(entropy={domain.entropy:.4f} >= {self.policy_cfg.ambiguous_continuation_entropy_th})"
+                )
                 print(f"  - prev_top_domain: {prev_top_domain} (來自 TopicAnalysis)")
                 print(f"  - current_top_domain: {domain.top_domain}")
                 print(f"  - turn_index > 0: {self.turn_index > 0}")
@@ -534,24 +478,26 @@ class SemanticFlowClassifier:
             # 簡化：只要模糊就直接回退，不管 top domain 是否相同
             # 但需要檢查 prev_dist 是否存在，否則無法回退
             if is_ambiguous and prev_top_domain and self.turn_index > 0:
-                # 檢查 prev_dist 是否存在
-                prev_dist = topic.prev_dist  # 使用 TopicAnalysis 中保存的更新前的 prev_dist
-                prev_active_domains = topic.prev_active_domains  # 使用 TopicAnalysis 中保存的更新前的 prev_active_domains
+                prev_dist = topic.prev_dist
+                prev_active_domains = topic.prev_active_domains
                 
                 if prev_dist:
-                    # prev_dist 存在，可以觸發模糊延續
-                    should_continue = True
-                    print(f"  [模糊延續] 觸發模糊延續（entropy={domain.entropy:.4f} >= {self.policy_cfg.ambiguous_continuation_entropy_th}）")
-                    
-                    print(f"  [模糊延續] 調整前：topic_continue={topic.is_continuing}, topic_overlap={topic.overlap_score:.4f}")
+                    if DST_DEBUG_VERBOSE:
+                        print(
+                            "  [模糊延續] 觸發模糊延續"
+                            f"（entropy={domain.entropy:.4f} >= {self.policy_cfg.ambiguous_continuation_entropy_th}）"
+                        )
+                        
+                        print(
+                            "  [模糊延續] 調整前："
+                            f"topic_continue={topic.is_continuing}, topic_overlap={topic.overlap_score:.4f}"
+                        )
                     # 調整 MT 相關參數以傾向延續
-                    # 1. 提升 topic_overlap（假設有延續性）
                     adjusted_topic_overlap = max(
                         topic.overlap_score,
-                        self.policy_cfg.ambiguous_continuation_min_overlap
+                        self.policy_cfg.ambiguous_continuation_min_overlap,
                     )
                     
-                    # 2. 如果原本不是延續，改為延續
                     if not topic.is_continuing:
                         adjusted_topic_continue = True
 
@@ -563,36 +509,113 @@ class SemanticFlowClassifier:
                     else:
                         topic.reason = "ambiguous_continuation_adjusted"
                     
-                    # 模糊延續：直接使用上一輪的分布，不融合本輪
-                    # 直接使用上一輪的分布作為融合後的分布
+                    # 模糊延續：直接使用上一輪的分布與 active_domains，不融合本輪
                     fused_distribution = dict(prev_dist)
+
+                    # 若上一輪有 active_domains，沿用作為本輪的 active_domains（語意：模糊但延續上一輪主題池）
+                    if prev_active_domains:
+                        domain.active_domains = list(prev_active_domains)
+                        domain.is_multi_domain = len(domain.active_domains) >= 2
                     
                     # 更新記憶：使用上一輪的分布和活躍領域（讓記憶「回退」到上一輪狀態）
-                    # 這樣如果下一輪還是模糊，會繼續延續上一輪的領域
                     if self.turn_index > 0:
-                        # 將記憶更新為上一輪的分布
                         self.topic_tracker.state.memory_dist = dict(prev_dist)
-                        # 同時更新 prev_dist，讓下一輪的計算更準確
                         self.topic_tracker.state.prev_dist = dict(prev_dist)
-                        # 回退 prev_active_domains，保持一致性
                         if prev_active_domains:
                             self.topic_tracker.state.prev_active_domains = list(prev_active_domains)
                         else:
                             self.topic_tracker.state.prev_active_domains = []
                     
-                    print(f"  [模糊延續] 直接使用上一輪分布：prev_domain={prev_top_domain}")
-                    print(f"    - 本輪分布 top3: {sorted(domain.distribution.items(), key=lambda x: x[1], reverse=True)[:3]}")
-                    print(f"    - 使用上一輪分布 top3: {sorted(prev_dist.items(), key=lambda x: x[1], reverse=True)[:3]}")
-                    if prev_active_domains:
-                        print(f"    - 回退 prev_active_domains: {prev_active_domains}")
-                    
-                    print(f"  [模糊延續] 調整後：topic_continue={adjusted_topic_continue}, topic_overlap={adjusted_topic_overlap:.4f}")
+                    if DST_DEBUG_VERBOSE:
+                        print(f"  [模糊延續] 直接使用上一輪分布：prev_domain={prev_top_domain}")
+                        print(
+                            "    - 本輪分布 top3: "
+                            f"{sorted(domain.distribution.items(), key=lambda x: x[1], reverse=True)[:3]}"
+                        )
+                        print(
+                            "    - 使用上一輪分布 top3: "
+                            f"{sorted(prev_dist.items(), key=lambda x: x[1], reverse=True)[:3]}"
+                        )
+                        if prev_active_domains:
+                            print(f"    - 回退 prev_active_domains: {prev_active_domains}")
+                        
+                        print(
+                            "  [模糊延續] 調整後："
+                            f"topic_continue={adjusted_topic_continue}, topic_overlap={adjusted_topic_overlap:.4f}"
+                        )
                 else:
-                    # prev_dist 為空，無法回退，不觸發模糊延續
-                    print(f"  [模糊延續] 跳過：prev_dist 為空，無法回退到上一輪分布")
+                    if DST_DEBUG_VERBOSE:
+                        print("  [模糊延續] 跳過：prev_dist 為空，無法回退到上一輪分布")
             else:
-                if self.turn_index > 0:
-                    print(f"  [模糊延續] 未觸發：is_ambiguous={is_ambiguous}, prev_top_domain={prev_top_domain}, turn_index={self.turn_index}")
+                if self.turn_index > 0 and DST_DEBUG_VERBOSE:
+                    print(
+                        "  [模糊延續] 未觸發："
+                        f"is_ambiguous={is_ambiguous}, prev_top_domain={prev_top_domain}, turn_index={self.turn_index}"
+                    )
+        # 非模糊情境：根據多領域追蹤的強/軟/切模式調整 active_domains 與 fused_distribution
+        if not is_ambiguous and not is_overview_query:
+            mode = getattr(topic, "continuation_mode", None)
+            prev_dist = topic.prev_dist
+            prev_active = topic.prev_active_domains or []
+
+            # 強延續：偏向上一輪領域
+            if mode == "strong":
+                if prev_active:
+                    domain.active_domains = list(prev_active)
+                    domain.is_multi_domain = len(domain.active_domains) >= 2
+                if prev_dist:
+                    # 讓檢索優先使用上一輪的領域分布
+                    fused_distribution = dict(prev_dist)
+                    domain.fused_distribution = fused_distribution
+
+            # 軟延續：上一輪 + 本輪混和
+            elif mode == "soft":
+                # active_domains 取聯集（多領域池內換焦點）
+                merged = set(domain.active_domains or []) | set(prev_active or [])
+                domain.active_domains = sorted(list(merged)) if merged else list(domain.active_domains)
+                domain.is_multi_domain = len(domain.active_domains) >= 2
+
+                # 分布混和：0.5 * prev + 0.5 * cur（若有 prev_dist）
+                if prev_dist:
+                    alpha = 0.5
+                    mixed: Dict[str, float] = {}
+                    keys = set(prev_dist.keys()) | set(domain.distribution.keys())
+                    for k in keys:
+                        mixed[k] = alpha * float(prev_dist.get(k, 0.0)) + (1.0 - alpha) * float(domain.distribution.get(k, 0.0))
+                    total = sum(mixed.values())
+                    if total > 0:
+                        mixed = {k: v / total for k, v in mixed.items()}
+                    fused_distribution = mixed
+                    domain.fused_distribution = fused_distribution
+
+            # 切換（mode == "shift" 或其他）：保持本輪 active_domains 與分布，不做額外 fused
+
+        return adjusted_topic_continue, adjusted_topic_overlap, fused_distribution
+    
+    def _decide_policy( # 決策層
+        self,
+        domain: DomainAnalysis,
+        context: ContextAnalysis,
+        topic: TopicAnalysis,
+        user_query: str,  # 新增參數：用於檢測整體查詢
+        task_label: Optional[str] = None,
+        detected_region: Optional[str] = None,
+    ) -> PolicyDecision:
+        from .dst_policy import compute_MT, predicted_flow_from_C_MT
+        
+        # 是否模糊（需先算，整體僅在「模糊」時才依向量／上一輪整體判定）
+        is_ambiguous = self.policy_cfg.enable_ambiguous_continuation and (domain.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th)
+        
+        # 1. 先以 entropy + 向量相似度判斷是否為整體查詢，並建立 overview_distribution（若需要）
+        is_overview_query, _ = self._analyze_overview_query(domain, user_query, is_ambiguous)
+        
+        # 2. 再根據「模糊 / 整體 / topic 狀態」統一決定記憶與 fused_distribution
+        adjusted_topic_continue, adjusted_topic_overlap, fused_distribution = self._handle_memory_and_fused_distribution(
+            domain=domain,
+            topic=topic,
+            is_ambiguous=is_ambiguous,
+            is_overview_query=is_overview_query,
+        )
         
         # 使用調整後的參數進行決策（簡化版：移除 D 和 margin）
         C_level, ambig, policy_case, action = decide_policy(
@@ -602,6 +625,8 @@ class SemanticFlowClassifier:
             topic_overlap=adjusted_topic_overlap,    # 使用調整後的值
             is_multi_domain=domain.is_multi_domain,
             cfg=self.policy_cfg,
+            task_label=task_label,
+            detected_region=detected_region,
         )
         
         # 使用調整後的 MT 計算 semantic_flow
@@ -619,7 +644,8 @@ class SemanticFlowClassifier:
         # 如果整體查詢，優先使用整體分布
         if domain.is_overview_query and domain.overview_distribution:
             domain.fused_distribution = domain.overview_distribution
-            print(f"  [整體查詢] 使用整體分布作為 fused_distribution")
+            if DST_DEBUG_VERBOSE:
+                print(f"  [整體查詢] 使用整體分布作為 fused_distribution")
         
         return PolicyDecision(
             context_level=C_level,
@@ -650,8 +676,13 @@ class SemanticFlowClassifier:
             dist = {label: 1.0}
             return label, dist
 
-        # 2. 模糊沿用：已觸發沿用則 Scope 沿用上一輪
-        if domain_analysis.fused_distribution is not None:
+        # 2. 模糊沿用：只有在「模糊 + 已有 fused 分布」時，Scope 才沿用上一輪
+        #    若只是一般 strong/soft 延續導致 fused_distribution 被設，但熵不高，仍應依本輪 active_domains 判斷
+        if (
+            domain_analysis.fused_distribution is not None
+            and self.policy_cfg.enable_ambiguous_continuation
+            and domain_analysis.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th
+        ):
             label = self._prev_scope or "S_overview"
             dist = {label: 1.0}
             return label, dist
@@ -704,15 +735,31 @@ class SemanticFlowClassifier:
         # 逐層分析
         domain = self._analyze_domain(user_query)
         context = self._analyze_context(user_query)
+
+        # 先依 entropy 判斷本輪是否為「模糊」狀態，再將此訊號傳給 MultiTopicTracker
+        is_ambiguous_for_topic = (
+            self.policy_cfg.enable_ambiguous_continuation
+            and domain.entropy >= self.policy_cfg.ambiguous_continuation_entropy_th
+        )
+
         topic = self._analyze_topic(
             domain.distribution, 
             domain.top_domain, 
             domain.active_domains,  # 傳遞 active_domains
+            is_ambiguous=is_ambiguous_for_topic,
         )
-        policy = self._decide_policy(domain, context, topic, user_query)  # 傳遞 user_query
+        # 提取地區
+        detected_region = extract_region(user_query)
 
         # Task 分類（分類器）；Scope 分類（規則：整體/單領域/多領域）
         task_label, task_dist = self._classify_task_only(user_query)
+
+        policy = self._decide_policy(
+            domain, context, topic, user_query, 
+            task_label=task_label, 
+            detected_region=detected_region
+        )
+
         scope_label, scope_dist = self._classify_scope(domain, user_query)
 
         # 構建結果
@@ -726,6 +773,7 @@ class SemanticFlowClassifier:
             task_dist=task_dist,
             scope_label=scope_label,
             scope_dist=scope_dist,
+            detected_region=detected_region,
         )
 
         # 供下一輪 Scope 沿用與持久化
@@ -740,35 +788,3 @@ class SemanticFlowClassifier:
 
         self.turn_index += 1
         return result
-
-
-# ============================================================================
-# 便利函數
-# ============================================================================
-
-def format_flow_result(result: FlowResult) -> str:
-    """格式化流程結果為可讀的文本"""
-    return str(result)
-
-
-def batch_analyze(
-    classifier: SemanticFlowClassifier,
-    dialogue: List[Dict[str, str]],
-) -> List[FlowResult]:
-    """
-    批量分析一段對話序列
-    
-    Args:
-        classifier: 分類器實例
-        dialogue: 對話列表，每個元素是 {"user": "...", "assistant": "..."}
-    
-    Returns:
-        FlowResult 列表
-    """
-    results = []
-    for turn in dialogue:
-        user_query = turn.get("user", "")
-        assistant_reply = turn.get("assistant", None)
-        result = classifier.predict(user_query, assistant_reply)
-        results.append(result)
-    return results

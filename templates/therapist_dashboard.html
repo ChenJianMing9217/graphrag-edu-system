@@ -3,31 +3,28 @@
 {% block title %}早療人員儀錶板 - 早療系統{% endblock %}
 
 {% block content %}
-<div class="row">
+<!-- 歡迎標題與數據卡片 -->
+<div class="row g-4 mb-5">
     <div class="col-12">
-        <div class="dashboard-header mb-5">
-            <div class="d-flex align-items-center justify-content-between">
-                <div>
-                    <h2 class="welcome-title mb-0">歡迎回來，{{ current_user.username }}！</h2>
-                </div>
-                <div class="dashboard-stats">
-                    <div class="stat-card">
-                        <div class="stat-icon">
-                            <i class="fas fa-child text-success"></i>
-                        </div>
-                        <div class="stat-content">
-                            <div class="stat-number">{{ children|length if children else 0 }}</div>
-                            <div class="stat-label">兒童數量</div>
-                        </div>
+        <div class="d-md-flex align-items-center justify-content-between mb-4">
+            <h2 class="welcome-title mb-3 mb-md-0">歡迎回來，{{ current_user.username }}！</h2>
+            <div class="d-flex gap-3">
+                <div class="stat-card p-3 d-flex align-items-center bg-white shadow-sm rounded-3 overflow-hidden" style="min-width: 180px; border: 1px solid rgba(0,0,0,0.05);">
+                    <div class="stat-icon bg-success bg-opacity-10 text-success p-3 rounded-3 me-3">
+                        <i class="fas fa-child fs-4"></i>
                     </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">
-                            <i class="fas fa-user text-warning"></i>
-                        </div>
-                        <div class="stat-content">
-                            <div class="stat-number">{{ caregivers|length if caregivers else 0 }}</div>
-                            <div class="stat-label">照護者數量</div>
-                        </div>
+                    <div>
+                        <div class="stat-number h4 mb-0 fw-bold">{{ children|length if children else 0 }}</div>
+                        <div class="small text-muted">兒童數量</div>
+                    </div>
+                </div>
+                <div class="stat-card p-3 d-flex align-items-center bg-white shadow-sm rounded-3 overflow-hidden" style="min-width: 180px; border: 1px solid rgba(0,0,0,0.05);">
+                    <div class="stat-icon bg-warning bg-opacity-10 text-warning p-3 rounded-3 me-3">
+                        <i class="fas fa-users fs-4"></i>
+                    </div>
+                    <div>
+                        <div class="stat-number h4 mb-0 fw-bold">{{ caregivers|length if caregivers else 0 }}</div>
+                        <div class="small text-muted">照護者數量</div>
                     </div>
                 </div>
             </div>
@@ -38,11 +35,10 @@
 <!-- 新增照護者 -->
 <div class="row mb-5">
     <div class="col-12">
-        <div class="card glass-effect">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-user-plus text-success me-2"></i>新增照護者帳號
-                </h5>
+        <div class="card">
+            <div class="card-header d-flex align-items-center">
+                <i class="fas fa-user-plus text-success fs-4 me-3"></i>
+                <h5 class="mb-0">新增照護者帳號</h5>
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('add_caregiver') }}" class="needs-validation" novalidate>
@@ -98,11 +94,10 @@
 <!-- 新增兒童資料 -->
 <div class="row mb-5">
     <div class="col-12">
-        <div class="card glass-effect">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-child text-primary me-2"></i>新增兒童資料
-                </h5>
+        <div class="card">
+            <div class="card-header d-flex align-items-center">
+                <i class="fas fa-child text-primary fs-4 me-3"></i>
+                <h5 class="mb-0">新增兒童資料</h5>
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('add_child') }}" class="needs-validation" novalidate>
@@ -176,11 +171,10 @@
 <!-- 上傳聯評報告 -->
 <div class="row mb-5">
     <div class="col-12">
-        <div class="card glass-effect">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-file-upload text-warning me-2"></i>上傳聯評報告
-                </h5>
+        <div class="card">
+            <div class="card-header d-flex align-items-center">
+                <i class="fas fa-file-upload text-warning fs-4 me-3"></i>
+                <h5 class="mb-0">上傳聯評報告</h5>
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('upload_report') }}" enctype="multipart/form-data" class="needs-validation" novalidate>
@@ -230,11 +224,10 @@
 <!-- 兒童列表 -->
 <div class="row">
     <div class="col-12">
-        <div class="card glass-effect">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-list text-info me-2"></i>兒童資料列表
-                </h5>
+        <div class="card">
+            <div class="card-header d-flex align-items-center">
+                <i class="fas fa-list text-info fs-4 me-3"></i>
+                <h5 class="mb-0">兒童資料列表</h5>
             </div>
             <div class="card-body">
                 {% if children %}
@@ -341,136 +334,45 @@
 </div>
 
 <style>
-/* 早療人員儀表板樣式 */
-.dashboard-header {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
-    backdrop-filter: blur(20px);
-    border-radius: 20px;
-    padding: 2rem;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-}
-
+/* 避免過重陰影，使用全局變數 */
 .welcome-title {
-    font-size: 1.35rem;
-    font-weight: 600;
-    color: #212529;
-}
-
-.dashboard-stats {
-    display: flex;
-    gap: 1rem;
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--apple-black);
 }
 
 .stat-card {
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
-    border-radius: 16px;
-    padding: 1.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    transition: all 0.3s ease;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
-}
-
-.stat-icon {
-    width: 50px;
-    height: 50px;
-    border-radius: 12px;
-    background: linear-gradient(135deg, rgba(0, 122, 255, 0.1), rgba(175, 82, 222, 0.1));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem;
-}
-
-.stat-content {
-    flex: 1;
-}
-
-.stat-number {
-    font-size: 2rem;
-    font-weight: 700;
-    color: var(--apple-dark);
-    line-height: 1;
-}
-
-.stat-label {
-    font-size: 0.9rem;
-    color: var(--apple-gray);
-    font-weight: 500;
-}
-
-/* 表格樣式 */
-.child-row {
-    transition: all 0.3s ease;
-}
-
-.child-row:hover {
-    background: rgba(255, 255, 255, 0.1);
-    transform: translateX(4px);
-}
-
-.child-name {
-    display: flex;
-    align-items: center;
-    font-weight: 600;
-}
-
-.caregiver-info {
-    display: flex;
-    align-items: center;
-    font-weight: 500;
+    transform: translateY(-3px);
+    box-shadow: var(--apple-shadow-lg) !important;
 }
 
 .bg-pink {
     background: linear-gradient(135deg, #FF2D92, #FF6B9D) !important;
 }
 
-/* 空狀態樣式 */
-.empty-state {
-    padding: 2rem;
+.table-responsive {
+    border-radius: 1rem;
+    overflow: hidden;
 }
 
-.empty-state-icon {
-    color: var(--apple-gray);
-}
-
-/* 響應式設計 */
+/* 響應式微調 */
 @media (max-width: 768px) {
-    .dashboard-header {
-        padding: 1.5rem;
+    .welcome-title {
+        font-size: 1.4rem;
     }
     
     .dashboard-stats {
-        flex-direction: column;
-        gap: 0.5rem;
+        width: 100%;
     }
     
     .stat-card {
-        padding: 1rem;
-    }
-    
-    /* 兒童資料列表：表格拉寬、欄位不換行，可橫向捲動 */
-    .table-responsive {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        font-size: 0.85rem;
-    }
-    .table-responsive .table {
-        min-width: 560px;
-        table-layout: auto;
-    }
-    .table-responsive .table th,
-    .table-responsive .table td {
-        white-space: nowrap;
-        padding: 0.5rem 0.4rem;
+        flex: 1;
+        min-width: 0 !important;
     }
 }
 </style>

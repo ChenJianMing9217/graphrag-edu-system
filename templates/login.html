@@ -5,13 +5,13 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-5 col-md-7">
-        <div class="card glass-effect">
-            <div class="card-header text-center py-4">
-                <div class="login-icon mb-3">
+        <div class="card shadow-lg border-0">
+            <div class="card-header text-center py-5 bg-white border-0">
+                <div class="login-icon mb-4 shadow-sm mx-auto">
                     <i class="fas fa-sign-in-alt fa-3x text-primary"></i>
                 </div>
-                <h3 class="mb-0">歡迎回來</h3>
-                <p class="text-muted mt-2">請登入您的帳號以繼續使用</p>
+                <h2 class="fw-bold mb-1">歡迎回來</h2>
+                <p class="text-muted">專業的早療數據協作平台</p>
             </div>
             <div class="card-body p-5">
                 <form method="POST" class="needs-validation" novalidate>
@@ -49,6 +49,7 @@
                     </div>
                 </form>
                 
+                <!-- 註冊連結 (已隱藏)
                 <div class="text-center">
                     <div class="divider mb-4">
                         <span class="divider-text">或</span>
@@ -60,34 +61,28 @@
                         </a>
                     </p>
                 </div>
+                -->
             </div>
         </div>
         
-        <!-- 返回首頁 -->
-        <div class="text-center mt-4">
-            <a href="{{ url_for('index') }}" class="btn btn-outline-light">
-                <i class="fas fa-arrow-left me-2"></i>返回首頁
-            </a>
-        </div>
     </div>
 </div>
 
 <style>
 .login-icon {
-    background: linear-gradient(135deg, rgba(0, 122, 255, 0.1), rgba(175, 82, 222, 0.1));
-    border-radius: 50%;
+    background: var(--apple-light-gray);
+    border-radius: 1.25rem;
     width: 80px;
     height: 80px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: 0 auto;
-    border: 2px solid rgba(0, 122, 255, 0.2);
 }
 
 .divider {
     position: relative;
     text-align: center;
+    margin: 2rem 0;
 }
 
 .divider::before {
@@ -97,43 +92,20 @@
     left: 0;
     right: 0;
     height: 1px;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.05);
 }
 
 .divider-text {
-    background: var(--apple-card-bg);
+    background: white;
     padding: 0 1rem;
     color: var(--apple-gray);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+    position: relative;
+    z-index: 1;
 }
 
 .form-control-lg {
-    padding: 1rem 1.25rem;
-    font-size: 1.1rem;
-}
-
-.btn-outline-light {
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    color: white;
-    transition: all 0.3s ease;
-}
-
-.btn-outline-light:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.5);
-    color: white;
-    transform: translateY(-2px);
-}
-
-/* 表單驗證樣式 */
-.was-validated .form-control:invalid {
-    border-color: var(--apple-red);
-    box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.2);
-}
-
-.was-validated .form-control:valid {
-    border-color: var(--apple-green);
-    box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.2);
+    border-radius: 1rem;
 }
 </style>
 

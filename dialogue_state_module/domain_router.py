@@ -43,7 +43,7 @@ class DomainRouterConfig:
     """
     temperature: float = 0.04
 
-    active_prob_th: float = 0.30
+    active_prob_th: float = 0.2
     active_ratio_th: float = 0.60
     min_active_domains: int = 1
     max_active_domains: int = 4
@@ -81,7 +81,7 @@ class DomainRouter:
             if not isinstance(self.anchor_vecs[d], list) or len(self.anchor_vecs[d]) == 0:
                 raise ValueError(f"Anchor vectors for domain {d} must be a non-empty list")
 
-    def score_domains(self, text: str) -> List[Tuple[str, float]]:
+    def score_domains(self, text: str) -> List[Tuple[str, float]]: #目前取領域最大相似度作為分數，之後可改為 "平均相似度"
         """
         計算用戶查詢與各領域的相似度分數。
         對於每個領域，使用 Max Pooling（取最大值）作為最終分數。
@@ -115,7 +115,7 @@ class DomainRouter:
         active_probs = {d: float(dist[d]) for d in active}
         return active, active_probs
 
-    def predict(self, text: str) -> DomainResult:
+    def predict(self, text: str) -> DomainResult: # 領域路由預測
         ranked = self.score_domains(text)
         raw_scores = np.array([s for _, s in ranked], dtype=np.float64)
 
@@ -130,10 +130,10 @@ class DomainRouter:
         active_domains, active_domain_probs = self._select_active_domains(ranked, dist)
 
         return DomainResult(
-            dist=dist,
-            top_domain=top_domain,
-            top_prob=top_prob,
-            entropy=ent,
-            active_domains=active_domains,
-            active_domain_probs=active_domain_probs,
+            dist=dist, # 領域分布
+            top_domain=top_domain, # 最高相似度領域
+            top_prob=top_prob, # 最高相似度領域機率
+            entropy=ent, # 熵
+            active_domains=active_domains, # 活躍領域
+            active_domain_probs=active_domain_probs, # 活躍領域機率
         )

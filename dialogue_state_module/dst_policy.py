@@ -95,6 +95,8 @@ def decide_policy(
     topic_overlap: float,
     is_multi_domain: bool,
     cfg: DSTPolicyConfig,
+    task_label: Optional[str] = None,
+    detected_region: Optional[str] = None,
 ) -> Tuple[str, bool, str, str]:
     """
     簡化版四象限決策：用 (C, MT) 決定「延續與否/大方向」
@@ -155,6 +157,15 @@ def decide_policy(
             action = "DUAL_OR_CLARIFY"
             policy_case += "_DUAL"
 
+    # ---- 特殊任務觸發 (Task H: 轉介與在地資源) ----
+    if task_label == "H":
+        if not detected_region:
+            action = "LOCAL_RESOURCE_CLARIFY"
+            policy_case = "TASK_H_CLARIFY"
+        else:
+            action = "LOCAL_RESOURCE_SEARCH"
+            policy_case = "TASK_H_SEARCH"
+
     # ---- modifiers for debugging / downstream logic ----
     if ambig:
         policy_case += "_AMBIG"
@@ -177,5 +188,9 @@ def action_to_predicted_flow(action: str) -> str:
         return "continue"
     elif action == "WIDE_IN_DOMAIN":
         return "shift_soft"
+    elif action == "LOCAL_RESOURCE_SEARCH":
+        return "continue"
+    elif action == "LOCAL_RESOURCE_CLARIFY":
+        return "continue"
     else:  # DUAL_OR_CLARIFY or unknown
         return "shift_hard"

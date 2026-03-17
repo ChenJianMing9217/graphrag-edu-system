@@ -6,6 +6,10 @@ from typing import Dict, Any, Optional, Tuple, List
 import numpy as np
 
 
+# 控制 MultiTopicTracker 是否輸出詳細除錯訊息
+MT_DEBUG_VERBOSE: bool = False
+
+
 def l1_renormalize(d: Dict[str, float]) -> Dict[str, float]:
     s = float(sum(max(v, 0.0) for v in d.values()))
     if s <= 0:
@@ -28,25 +32,6 @@ def cosine_sim_dist(a: Dict[str, float], b: Dict[str, float]) -> float:
     if na <= 0 or nb <= 0:
         return 0.0
     return float(np.dot(va, vb) / (na * nb))
-
-
-def jaccard(a_keys: List[str], b_keys: List[str]) -> float:
-    sa = set(a_keys)
-    sb = set(b_keys)
-    if not sa or not sb:
-        return 0.0
-    return float(len(sa & sb) / len(sa | sb))
-
-
-def weighted_intersection(a: Dict[str, float], b: Dict[str, float]) -> float:
-    """
-    Weighted overlap on shared keys, bounded in [0,1] after we renormalize.
-    Use sum of min(p_i, q_i). If a and b are L1-normalized distributions, this ∈ [0,1].
-    """
-    if not a or not b:
-        return 0.0
-    keys = set(a.keys()) & set(b.keys())
-    return float(sum(min(a[k], b[k]) for k in keys))
 
 
 def total_variation_distance(a: Dict[str, float], b: Dict[str, float]) -> float:
@@ -89,12 +74,12 @@ class MultiTopicConfig:
     similarity_th: float = 0.97
     min_conf_for_similarity: float = 0.10
 
-    # overlap 組合權重：確保結果仍在 [0,1]
-    w_jaccard: float = 0.5
-    w_weighted: float = 0.5
-    
-    # 強切換判斷門檻（簡化版：只用 TV 距離）
+    # 強切換判斷門檻（僅用 TV 距離）
     hard_shift_tv_threshold: float = 0.6  # TV 距離超過此值視為強切換
+
+    # TV 判斷延續強度用門檻
+    tv_strong_th: float = 0.2  # TV <= tv_strong_th → 強延續
+    tv_shift_th: float = 0.5   # TV >= tv_shift_th → 偏切換
 
 
 @dataclass
@@ -161,6 +146,7 @@ class MultiTopicTracker:
         confidence: float,
         cur_active_domains: Optional[List[str]] = None,  # 保留參數以保持接口兼容，但不使用
         prev_active_domains: Optional[List[str]] = None,  # 保留參數以保持接口兼容，但不使用
+        is_ambiguous: bool = False,  # 新增：本輪是否為高熵「模糊」狀態
     ) -> Dict[str, Any]:
         """
         簡化版：只用 TV 距離計算 MT 和判斷強切換
@@ -176,18 +162,34 @@ class MultiTopicTracker:
 
         # first turn
         if not self.state.prev_dist:
+            # 第一次出現主題：視為「強延續起點」，記憶直接等於本輪
             self.state.memory_dist = dict(cur_dist)
             self.state.prev_dist = dict(cur_dist)
             self.state.prev_raw_top_domain = cur_raw_top_domain
             if cur_active_domains:
                 self.state.prev_active_domains = list(cur_active_domains)
+
+            continuation_mode = "strong"
+            reason = "first_turn"
+
+            if MT_DEBUG_VERBOSE:
+                print(
+                    f"[MultiTopicTracker] tv_distance=0.000, "
+                    f"active_domain_coverage=0.000, "
+                    f"topic_continue=True, reason={reason}"
+                )
+
             return {
                 "topic_continue": True,
-                "reason": "first_turn",
+                "reason": reason,
                 "topic_overlap": 0.0,
                 "dist_similarity": 0.0,
+                "active_domain_coverage": 0.0,
+                "continuation_mode": continuation_mode,
                 "prev_raw_top_domain": None,
                 "cur_raw_top_domain": cur_raw_top_domain,
+                "is_hard_shift": False,
+                "tv_distance": 0.0,
             }
 
         # 使用未更新的 mem（歷史趨勢，不包含本次）
@@ -200,14 +202,14 @@ class MultiTopicTracker:
         # 使用 state 中的 prev_active_domains（如果沒有傳入）
         if prev_active_domains is None:
             prev_active_domains = self.state.prev_active_domains
-
+        
         # 計算 TV 距離（用於判斷是否強切換和計算 MT）
         tv_distance = total_variation_distance(
             l1_renormalize(mem_before_update), 
             l1_renormalize(cur_dist)
         )
 
-        # 簡化版：只用 TV 距離判斷是否強切換
+        # 簡化版：只用 TV 距離判斷是否強切換（僅在「非模糊」情況下有效）
         is_hard_shift = tv_distance >= self.cfg.hard_shift_tv_threshold
 
         # 計算綜合 MT 分數（使用未更新的 mem）
@@ -220,26 +222,75 @@ class MultiTopicTracker:
 
         dist_similarity = cosine_sim_dist(prev, cur_dist)
 
+        # 計算 active_domains 覆蓋度（Jaccard）——目前僅供觀察，不參與判斷
+        if prev_active_domains and cur_active_domains:
+            prev_set = set(prev_active_domains)
+            cur_set = set(cur_active_domains)
+            inter = prev_set & cur_set
+            union = prev_set | cur_set
+            active_domain_coverage = float(len(inter) / len(union)) if union else 0.0
+        else:
+            active_domain_coverage = 0.0
+
         # get tops for debug
         mem_top = max(mem_before_update.items(), key=lambda x: x[1])[0] if mem_before_update else None
         cur_top = max(cur_dist.items(), key=lambda x: x[1])[0] if cur_dist else None
 
-        # Decision（保持簡單，主要基於綜合 MT 分數）
-        if mem_top is not None and cur_top is not None and cur_top == mem_top:
+        # Decision：根據 TV 把情況切成 強延續 / 軟延續 / 切換
+        # 但在「模糊」(is_ambiguous=True) 情況下，TV 僅做觀察，不主導是否切換。
+        tv = float(tv_distance)
+        continuation_mode = "soft"  # 預設視為軟延續 / 一般情況
+
+        if is_ambiguous:
+            # 高熵「模糊」情境：
+            # - TV 只作為 debug 資訊回傳，不用來觸發切換或記憶重置
+            # - 預設視為延續，由上層 DST 的模糊延續規則決定要不要真的沿用上一輪
             topic_continue = True
-            reason = "top_domain_match"
-        elif topic_overlap >= self.cfg.overlap_th:
-            topic_continue = True
-            reason = "high_topic_overlap"
-        elif dist_similarity >= self.cfg.similarity_th and confidence >= self.cfg.min_conf_for_similarity:
-            topic_continue = True
-            reason = "high_dist_similarity"
+            reason = "ambiguous_ignore_tv"
+            # 在模糊情況下，不視為 hard shift
+            is_hard_shift = False
         else:
-            topic_continue = False
-            reason = "topic_shift"
+            # 非模糊情境：TV 主導強/軟/切換判斷
+            # Case 1：TV 低 → 強延續
+            if tv <= self.cfg.tv_strong_th:
+                topic_continue = True
+                topic_overlap = max(topic_overlap, max(self.cfg.overlap_th, 0.7))
+                reason = "tv_strong"
+                continuation_mode = "strong"
+
+            # Case 3：TV 高 → 偏切換
+            elif tv >= self.cfg.tv_shift_th:
+                topic_continue = False
+                topic_overlap = min(topic_overlap, 0.2)
+                reason = "tv_shift"
+                continuation_mode = "shift"
+
+            # 其他情況：介於強與切換之間 → 軟延續 / 一般切換（回退到原本基於 MT / cosine 的判斷）
+            else:
+                if mem_top is not None and cur_top is not None and cur_top == mem_top:
+                    topic_continue = True
+                    reason = "top_domain_match"
+                elif topic_overlap >= self.cfg.overlap_th:
+                    topic_continue = True
+                    reason = "high_topic_overlap"
+                elif dist_similarity >= self.cfg.similarity_th and confidence >= self.cfg.min_conf_for_similarity:
+                    topic_continue = True
+                    reason = "high_dist_similarity"
+                else:
+                    topic_continue = False
+                    reason = "topic_shift"
+
+        # 調試輸出：觀察 TV 與 active_domains 覆蓋度（僅在 verbose 模式下啟用）
+        if MT_DEBUG_VERBOSE:
+            print(
+                f"[MultiTopicTracker] tv_distance={tv_distance:.3f}, "
+                f"active_domain_coverage={active_domain_coverage:.3f}, "
+                f"topic_continue={topic_continue}, reason={reason}"
+            )
 
         # 更新記憶：強切換時重置，否則正常更新
-        if is_hard_shift:
+        # 注意：在「模糊」情況下，即使 TV 很大也不做 hard reset，交由上層 DST 決定是否回退記憶。
+        if (not is_ambiguous) and is_hard_shift:
             # 強切換：重置 mem，只記本輪
             self.state.memory_dist = dict(cur_dist)
             reason += " (mem_reset)"
@@ -258,6 +309,8 @@ class MultiTopicTracker:
             "reason": reason,
             "topic_overlap": float(topic_overlap),  # 這是綜合 MT 分數
             "dist_similarity": float(dist_similarity),
+            "active_domain_coverage": float(active_domain_coverage),
+            "continuation_mode": continuation_mode,
             "memory_top_domain": mem_top,
             "cur_top_domain": cur_top,
             "prev_raw_top_domain": prev_raw_top_domain_before_update,  # 使用更新前的值（真正的上一輪）

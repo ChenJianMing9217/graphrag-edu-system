@@ -1,16 +1,10 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-早療系統配置檔案（app_v4）
-統一管理資料庫連接和系統設定
-使用 app_v4 的進階 PDF 處理和圖譜插入方式
-"""
+
 
 import os
 
 # 資料庫連接設定
 MYSQL_CONFIG = {
-    'host': '10.242.30.37',
+    'host': '192.168.150.136',
     'port': 3306,
     'user': 'root',
     'password': '12345678',
@@ -18,9 +12,19 @@ MYSQL_CONFIG = {
 }
 
 NEO4J_CONFIG = {
-    'uri': 'bolt://10.242.30.37:7687',
+    'uri': 'bolt://192.168.150.136:7687',
     'user': 'neo4j',
     'password': 'password'
+}
+
+LLM_CONFIG = {
+    'base_url': 'http://192.168.150.136:8000/v1',
+    'api_key': 'vllm-key',
+    'model': 'google/gemma-3-4b-it'
+}
+
+EMBED_CONFIG = {
+    'url': 'http://192.168.150.136:8080/embed'
 }
 
 # 應用程式設定

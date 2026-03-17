@@ -10,38 +10,32 @@
     <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            /* 基本黑白與灰階配色（簡約） */
-            --apple-blue: #0d6efd;
-            --apple-green: #198754;
-            --apple-orange: #fd7e14;
-            --apple-red: #dc3545;
-            --apple-gray: #6c757d;
-            --apple-light-gray: #f5f5f5;
-            --apple-white: #ffffff;
-            --apple-black: #212529;
+            /* 現代化配色方案 (Clean & Premium) */
+            --apple-blue: #3B82F6;
+            --apple-blue-hover: #2563EB;
+            --apple-green: #10B981;
+            --apple-green-hover: #059669;
+            --apple-orange: #F59E0B;
+            --apple-red: #EF4444;
+            --apple-gray: #64748B;
+            --apple-light-gray: #F1F5F9;
+            --apple-white: #FFFFFF;
+            --apple-black: #1E293B;
             
-            /* 玻璃/陰影：改為輕量版本 */
-            --apple-blur: blur(8px);
+            /* 背景色彩 */
+            --app-bg: #F8FAFC;
+            --card-bg: rgba(255, 255, 255, 0.85);
             
-            /* 間距系統 */
-            --apple-spacing-xs: 0.25rem;
-            --apple-spacing-sm: 0.5rem;
-            --apple-spacing-md: 1rem;
-            --apple-spacing-lg: 1.5rem;
-            --apple-spacing-xl: 2rem;
-            --apple-spacing-2xl: 3rem;
-            
-            /* 圓角系統 */
-            --apple-radius-sm: 8px;
-            --apple-radius-md: 12px;
-            --apple-radius-lg: 16px;
-            --apple-radius-xl: 20px;
-            --apple-radius-2xl: 24px;
+            /* 間距與圓角 */
+            --apple-radius: 1rem;
+            --apple-radius-lg: 1.5rem;
             
             /* 陰影系統 */
-            --apple-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-            --apple-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
-            --apple-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+            --apple-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --apple-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            
+            /* 模糊效果 */
+            --apple-blur: blur(12px);
         }
 
         * {
@@ -49,265 +43,129 @@
         }
 
         body {
-            background: #f8f9fa;
+            background: var(--app-bg);
+            background-attachment: fixed;
             min-height: 100vh;
             color: var(--apple-black);
             line-height: 1.6;
             font-weight: 400;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
         }
 
         .navbar {
-            background: #ffffff !important;
-            border-bottom: 1px solid #e5e5e5;
-            box-shadow: var(--apple-shadow-sm);
-            padding: var(--apple-spacing-md) 0;
+            background: rgba(255, 255, 255, 0.8) !important;
+            backdrop-filter: var(--apple-blur);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
         }
 
         .navbar-brand {
-            font-weight: 600;
-            font-size: 1.5rem;
+            font-weight: 700;
+            font-size: 1.4rem;
             color: var(--apple-black) !important;
-            text-shadow: none;
-            letter-spacing: -0.02em;
-        }
-
-        .navbar-nav .nav-link {
-            color: rgba(0, 0, 0, 0.8) !important;
-            font-weight: 500;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            border-radius: var(--apple-radius-md);
-            padding: var(--apple-spacing-sm) var(--apple-spacing-md) !important;
-            margin: 0 var(--apple-spacing-xs);
-            position: relative;
-        }
-
-        .navbar-nav .nav-link:hover {
-            background: rgba(0, 0, 0, 0.05);
-            color: var(--apple-black) !important;
-            transform: translateY(-1px);
-            box-shadow: var(--apple-shadow-sm);
-        }
-
-        .navbar-text {
-            color: rgba(0, 0, 0, 0.8) !important;
-            font-weight: 500;
-            font-size: 0.9rem;
+            letter-spacing: -0.03em;
         }
 
         .card {
-            background: #ffffff;
-            border: 1px solid #e5e5e5;
+            background: var(--card-bg);
+            backdrop-filter: var(--apple-blur);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             border-radius: var(--apple-radius-lg);
-            box-shadow: var(--apple-shadow-md);
-            transition: box-shadow 0.2s ease, border-color 0.2s ease;
-            overflow: hidden;
+            box-shadow: var(--apple-shadow);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .card:hover {
             box-shadow: var(--apple-shadow-lg);
-            border-color: #d0d0d0;
-        }
-
-        .card-header {
-            background: #f8f9fa;
-            border-bottom: 1px solid #e5e5e5;
-            border-radius: var(--apple-radius-lg) var(--apple-radius-lg) 0 0 !important;
-            font-weight: 600;
-            padding: var(--apple-spacing-lg);
-            color: var(--apple-black);
+            transform: translateY(-2px);
         }
 
         .btn {
-            border-radius: var(--apple-radius-md);
-            font-weight: 500;
-            padding: var(--apple-spacing-sm) var(--apple-spacing-lg);
-            transition: background-color 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-            border: 1px solid transparent;
-            font-size: 0.9rem;
-            letter-spacing: -0.01em;
+            border-radius: 0.75rem;
+            font-weight: 600;
+            padding: 0.6rem 1.25rem;
+            transition: all 0.2s ease;
+            font-size: 0.95rem;
         }
 
         .btn-primary {
             background: var(--apple-blue);
-            color: #ffffff;
-            box-shadow: var(--apple-shadow-sm);
             border-color: var(--apple-blue);
         }
 
         .btn-primary:hover {
-            background: #0b5ed7;
-            border-color: #0b5ed7;
-            box-shadow: var(--apple-shadow-md);
+            background: var(--apple-blue-hover);
+            border-color: var(--apple-blue-hover);
+            transform: translateY(-1px);
         }
 
-        .btn-success {
-            background: var(--apple-green);
-            color: #ffffff;
-            box-shadow: var(--apple-shadow-sm);
-            border-color: var(--apple-green);
-        }
-
-        .btn-success:hover {
-            background: #157347;
-            border-color: #157347;
-            box-shadow: var(--apple-shadow-md);
-        }
-
-        .btn-warning {
-            background: var(--apple-orange);
-            color: #212529;
-            box-shadow: var(--apple-shadow-sm);
-            border-color: var(--apple-orange);
-        }
-
-        .btn-warning:hover {
-            background: #e86b0c;
-            border-color: #e86b0c;
-            box-shadow: var(--apple-shadow-md);
-        }
-
-        .btn-info {
-            background: #0dcaf0;
-            color: #212529;
-            box-shadow: var(--apple-shadow-sm);
-            border-color: #0dcaf0;
-        }
-
-        .btn-info:hover {
-            background: #31d2f2;
-            border-color: #31d2f2;
-            box-shadow: var(--apple-shadow-md);
-        }
-
-        .btn-secondary {
-            background: var(--apple-gray);
-            color: #ffffff;
-            box-shadow: var(--apple-shadow-sm);
-            border-color: var(--apple-gray);
-        }
-
-        .btn-secondary:hover {
-            background: #5c636a;
-            border-color: #5c636a;
-            box-shadow: var(--apple-shadow-md);
+        .card-header {
+            background: rgba(255, 255, 255, 0.4);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+            font-weight: 700;
+            padding: 1.25rem 1.5rem;
+            color: var(--apple-black);
         }
 
         .form-control, .form-select {
-            border-radius: var(--apple-radius-md);
-            border: 1px solid #ced4da;
-            background: #ffffff;
-            color: var(--apple-black);
-            font-weight: 400;
-            transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
-            padding: var(--apple-spacing-sm) var(--apple-spacing-md);
+            border-radius: 0.75rem;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 0.7rem 1rem;
+            transition: all 0.2s ease;
         }
 
         .form-control:focus, .form-select:focus {
             border-color: var(--apple-blue);
-            box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.15);
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
             background: #ffffff;
-            outline: none;
-        }
-
-        .form-label {
-            font-weight: 500;
-            color: var(--apple-black);
-            margin-bottom: var(--apple-spacing-sm);
-            font-size: 0.9rem;
         }
 
         .alert {
-            border-radius: var(--apple-radius-md);
-            border: 1px solid #e5e5e5;
-            font-weight: 400;
-            padding: var(--apple-spacing-md) var(--apple-spacing-lg);
-            margin-bottom: var(--apple-spacing-md);
-        }
-
-        .alert-info {
-            background: rgba(0, 0, 0, 0.05);
-            color: var(--apple-black);
-            border-left: 3px solid var(--apple-black);
-        }
-
-        .alert-success {
-            background: rgba(0, 0, 0, 0.05);
-            color: var(--apple-black);
-            border-left: 3px solid #333333;
-        }
-
-        .alert-warning {
-            background: rgba(0, 0, 0, 0.05);
-            color: var(--apple-black);
-            border-left: 3px solid #666666;
-        }
-
-        .alert-danger {
-            background: rgba(0, 0, 0, 0.05);
-            color: var(--apple-black);
-            border-left: 3px solid var(--apple-black);
+            border-radius: 1rem;
+            border: none;
+            box-shadow: var(--apple-shadow);
+            padding: 1rem 1.25rem;
+            font-weight: 500;
         }
 
         .table {
-            background: #ffffff;
-            border-radius: var(--apple-radius-md);
+            border-radius: var(--apple-radius);
             overflow: hidden;
-            border: 1px solid #e5e5e5;
+            border: none;
+            background: transparent;
         }
 
         .table thead th {
-            background: rgba(0, 0, 0, 0.05);
-            border: none;
-            font-weight: 600;
-            color: var(--apple-black);
-            padding: var(--apple-spacing-md);
-            font-size: 0.9rem;
+            background: rgba(0, 0, 0, 0.02);
+            border-bottom: 2px solid rgba(0, 0, 0, 0.05);
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            color: var(--apple-gray);
+            padding: 1rem;
         }
 
-        .table tbody tr {
-            border-bottom: 1px solid #f0f0f0;
-            transition: background-color 0.2s ease;
-        }
-
-        .table tbody tr:hover {
-            background: #f8f9fa;
-        }
-
-        .list-group-item {
-            background: #ffffff;
-            border: 1px solid #e5e5e5;
-            border-radius: var(--apple-radius-md) !important;
-            margin-bottom: var(--apple-spacing-sm);
-            transition: background-color 0.2s ease, border-color 0.2s ease;
-            padding: var(--apple-spacing-md);
-        }
-
-        .list-group-item:hover {
-            background: #f8f9fa;
-            border-color: #d0d0d0;
+        .table td {
+            padding: 1.25rem 1rem;
+            vertical-align: middle;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.03);
         }
 
         .badge {
-            border-radius: var(--apple-radius-sm);
-            font-weight: 500;
-            padding: var(--apple-spacing-xs) var(--apple-spacing-sm);
-            font-size: 0.8rem;
-            letter-spacing: -0.01em;
+            padding: 0.4rem 0.8rem;
+            border-radius: 2rem;
+            font-weight: 600;
         }
 
-        .text-primary { color: var(--apple-blue) !important; }
-        .text-success { color: var(--apple-green) !important; }
-        .text-warning { color: var(--apple-orange) !important; }
-        .text-danger { color: var(--apple-red) !important; }
-        .text-info { color: #17A2B8 !important; }
-
-        .bg-primary { background: var(--apple-blue) !important; }
-        .bg-success { background: var(--apple-green) !important; }
-        .bg-warning { background: var(--apple-orange) !important; }
-        .bg-danger { background: var(--apple-red) !important; }
-        .bg-info { background: #17A2B8 !important; }
+        .bg-primary { background: linear-gradient(135deg, #3B82F6, #2563EB) !important; }
+        .bg-success { background: linear-gradient(135deg, #10B981, #059669) !important; }
+        .bg-warning { background: linear-gradient(135deg, #F59E0B, #D97706) !important; }
+        .bg-danger { background: linear-gradient(135deg, #EF4444, #DC2626) !important; }
+        .bg-info { background: linear-gradient(135deg, #06B6D4, #0891B2) !important; }
 
         h1, h2, h3, h4, h5, h6 {
             font-weight: 600;
@@ -451,6 +309,14 @@
                     </li>
                 </ul>
             </div>
+            {% else %}
+                {% if request.endpoint != 'index' %}
+                <div class="ms-auto">
+                    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary btn-sm border-0 text-muted">
+                        <i class="fas fa-home me-1"></i>返回首頁
+                    </a>
+                </div>
+                {% endif %}
             {% endif %}
         </div>
     </nav>
@@ -468,9 +334,36 @@
         {% endwith %}
 
         {% block content %}{% endblock %}
+        <div id="flash-messages-data" data-messages="{{ get_flashed_messages(with_categories=true) | tojson }}" style="display: none;"></div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script>
+        // 全局 SweetAlert 處理閃現訊息
+        document.addEventListener('DOMContentLoaded', function() {
+            const dataEl = document.getElementById('flash-messages-data');
+            if (!dataEl) return;
+            const flashMessages = JSON.parse(dataEl.dataset.messages);
+            
+            flashMessages.forEach(([category, message]) => {
+                let icon = 'info';
+                if (category === 'success') icon = 'success';
+                if (category === 'error' || category === 'danger') icon = 'error';
+                if (category === 'warning') icon = 'warning';
+                
+                Swal.fire({
+                    icon: icon,
+                    title: message,
+                    timer: 3000,
+                    timerProgressBar: true,
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false
+                });
+            });
+        });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

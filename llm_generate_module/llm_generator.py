@@ -11,9 +11,16 @@ from .prompt_manager import LLMPromptManager, LLMGenerationConfig
 @dataclass
 class LLMConfig:
     """LLM 基礎配置（API 相關）"""
-    base_url: str = "https://task-wise-medieval-generated.trycloudflare.com/v1" #暫用cloudflare的代理
-    api_key: str = "lm-studio"
-    model: str = "qwen2.5-14b-instruct"
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+
+    def __post_init__(self):
+        # 從主設定檔載入
+        from config import LLM_CONFIG
+        self.base_url = self.base_url or LLM_CONFIG.get('base_url', "")
+        self.api_key = self.api_key or LLM_CONFIG.get('api_key', "vllm-key")
+        self.model = self.model or LLM_CONFIG.get('model', "google/gemma-3-4b-it")
 
 
 class LLMGenerator:
@@ -27,6 +34,7 @@ class LLMGenerator:
             config: LLM 基礎配置，如果為 None 則使用默認配置
         """
         self.config = config or LLMConfig()
+        # 確保 openai 庫正確調用 vLLM
         self.client = OpenAI(
             base_url=self.config.base_url,
             api_key=self.config.api_key
@@ -97,6 +105,9 @@ class LLMGenerator:
         
         messages.append({"role": "user", "content": user_content})
         
+        # 正規化訊息列表，確保符合 vLLM 的交替順序要求
+        messages = self._normalize_messages(messages)
+        
         try:
             # 調用 LLM API（使用 generation_config 中的參數）
             response = self.client.chat.completions.create(
@@ -120,7 +131,58 @@ class LLMGenerator:
             # 返回錯誤提示
             return f"抱歉，生成回應時發生錯誤：{str(e)}"
     
-    def _format_retrieved_context(self, retrieved_context: List[Dict], config: LLMGenerationConfig) -> str:
+    def _normalize_messages(self, messages: List[Dict]) -> List[Dict]:
+        """
+        正規化訊息列表，確保符合 vLLM/OpenAI 的交替順序要求：
+        1. 合併連續的相同角色內容。
+        2. 確保第一個非 system 訊息是 user。
+        3. 確保最後一個訊息是 user。
+        4. 確保中間角色嚴格交替。
+        """
+        if not messages:
+            return []
+
+        # 1. 提取 System Prompt
+        system_msg = [m for m in messages if m["role"] == "system"]
+        other_msgs = [m for m in messages if m["role"] != "system"]
+
+        if not other_msgs:
+            return system_msg
+
+        # 2. 合併連續的相同角色
+        merged = []
+        for m in other_msgs:
+            if not merged or merged[-1]["role"] != m["role"]:
+                merged.append({"role": m["role"], "content": m["content"]})
+            else:
+                merged[-1]["content"] += "\n\n" + m["content"]
+
+        # 3. 確保第一個訊息是 user (如果開頭是 assistant 則移除，直到遇到 user)
+        while merged and merged[0]["role"] == "assistant":
+            merged.pop(0)
+
+        if not merged:
+            return system_msg
+
+        # 4. 確保最後一個訊息是 user (如果結尾是 assistant 則移除)
+        while merged and merged[-1]["role"] == "assistant":
+            merged.pop()
+
+        if not merged:
+            return system_msg
+
+        # 5. 確保中間嚴格交替（理論上合併後除了開頭結尾處理，中間已經交替了）
+        # 如果因為移除操作導致有連續角色（極端情況），可在此再次運行合併
+        final_history = []
+        for m in merged:
+            if not final_history or final_history[-1]["role"] != m["role"]:
+                final_history.append(m)
+            else:
+                final_history[-1]["content"] += "\n\n" + m["content"]
+
+        return system_msg + final_history
+
+    def _format_retrieved_context(self, context: List[Dict], config: LLMGenerationConfig) -> str:
         """
         格式化檢索到的上下文（使用 prompt_manager）
         

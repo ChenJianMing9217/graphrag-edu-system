@@ -5,31 +5,30 @@
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <div class="report-header mb-5">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    <h1 class="display-5 mb-2">
-                        <i class="fas fa-child text-primary me-3"></i>{{ child.name }} 的聯評報告
-                    </h1>
-                    <p class="lead text-muted">查看和管理兒童的聯評報告</p>
-                </div>
-                <div class="header-actions">
-                    <a href="{{ url_for('dashboard') }}" class="btn btn-outline-light">
-                        <i class="fas fa-arrow-left me-2"></i>返回儀錶板
-                    </a>
-                </div>
-            </div>
+<div class="report-header mb-5 p-4 rounded-4 bg-white shadow-sm" style="border: 1px solid rgba(0,0,0,0.05);">
+    <div class="d-md-flex justify-content-between align-items-center">
+        <div>
+            <h1 class="fw-bold mb-2">
+                <i class="fas fa-child text-primary me-2"></i>{{ child.name }} 的聯評報告
+            </h1>
+            <p class="text-muted mb-3 mb-md-0">詳細查看兒童的成長歷程與專業評估報告</p>
         </div>
+        <div>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-primary">
+                <i class="fas fa-arrow-left me-2"></i>返回儀錶板
+            </a>
+        </div>
+    </div>
+</div>
     </div>
 </div>
 
 <div class="row">
     <div class="col-md-4">
-        <div class="card glass-effect h-100">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-info-circle text-info me-2"></i>兒童資訊
-                </h5>
+        <div class="card h-100">
+            <div class="card-header d-flex align-items-center">
+                <i class="fas fa-info-circle text-info fs-4 me-3"></i>
+                <h5 class="mb-0">兒童資訊</h5>
             </div>
             <div class="card-body">
                 <div class="child-info-grid">
@@ -84,11 +83,10 @@
     </div>
     
     <div class="col-md-8">
-        <div class="card glass-effect">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-file-pdf text-danger me-2"></i>聯評報告
-                </h5>
+        <div class="card">
+            <div class="card-header d-flex align-items-center">
+                <i class="fas fa-file-pdf text-danger fs-4 me-3"></i>
+                <h5 class="mb-0">聯評報告列表</h5>
             </div>
             <div class="card-body">
                 {% if child.reports %}
@@ -216,256 +214,42 @@
     </div>
 </div>
 <style>
-/* 報告頁面樣式 */
-.report-header {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
-    backdrop-filter: blur(20px);
-    border-radius: 20px;
-    padding: 2rem;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-}
-
-.header-actions .btn-outline-light {
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    color: white;
-    transition: all 0.3s ease;
-}
-
-.header-actions .btn-outline-light:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.5);
-    color: white;
-    transform: translateY(-2px);
-}
-
-/* 兒童資訊樣式 */
-.child-info-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-
+/* 報告頁面樣式優化 */
 .info-item {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    padding: 1rem;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    gap: 1.25rem;
+    padding: 1.25rem;
+    background: var(--apple-light-gray);
+    border-radius: 1rem;
     transition: all 0.3s ease;
-}
-
-.info-item:hover {
-    background: rgba(255, 255, 255, 0.1);
-    transform: translateX(4px);
-}
-
-.info-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.2rem;
-}
-
-.info-content {
-    flex: 1;
-}
-
-.info-label {
-    font-size: 0.85rem;
-    color: var(--apple-gray);
-    font-weight: 500;
-    margin-bottom: 0.25rem;
-}
-
-.info-value {
-    font-size: 1rem;
-    color: var(--apple-dark);
-    font-weight: 600;
-}
-
-/* 報告列表樣式 */
-.reports-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
 }
 
 .report-item {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 16px;
+    background: #FFFFFF;
+    border-radius: 1.25rem;
     padding: 1.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    transition: all 0.3s ease;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    margin-bottom: 1.5rem;
 }
 
 .report-item:hover {
-    background: rgba(255, 255, 255, 0.15);
+    box-shadow: var(--apple-shadow-lg);
     transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
 }
 
-.report-header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-}
-
-.report-icon {
-    width: 50px;
-    height: 50px;
-    border-radius: 12px;
-    background: rgba(255, 59, 48, 0.1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem;
-}
-
-.report-info {
-    flex: 1;
-}
-
-.report-filename {
-    font-weight: 600;
-    color: var(--apple-dark);
-    font-size: 1.1rem;
-    margin-bottom: 0.5rem;
-}
-
-.report-date {
-    font-size: 0.9rem;
-    color: var(--apple-gray);
-}
-
-.report-actions {
-    display: flex;
-    gap: 0.5rem;
-}
-
-/* 處理資訊樣式 */
 .processing-info {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    padding: 1rem;
-    margin-top: 1rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: all 0.3s ease;
+    border-radius: 1rem;
+    padding: 1.25rem;
+    margin-top: 1.25rem;
+    background: #F8FAFC;
+    border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
-.processing-info.success {
-    border-left: 4px solid var(--apple-green);
-}
-
-.processing-info.failed {
-    border-left: 4px solid var(--apple-red);
-}
-
-.processing-info.pending {
-    border-left: 4px solid var(--apple-gray);
-}
-
-.processing-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
-}
-
-.processing-title {
-    font-weight: 600;
-    color: var(--apple-dark);
-}
-
-.processing-status {
-    padding: 0.25rem 0.75rem;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 500;
-}
-
-.processing-status.success {
-    background: rgba(52, 199, 89, 0.1);
-    color: var(--apple-green);
-}
-
-.processing-status.failed {
-    background: rgba(255, 59, 48, 0.1);
-    color: var(--apple-red);
-}
-
-.processing-status.pending {
-    background: rgba(142, 142, 147, 0.1);
-    color: var(--apple-gray);
-}
-
-.processing-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-}
-
-.detail-item {
-    display: flex;
-    align-items: center;
-    font-size: 0.9rem;
-    color: var(--apple-dark);
-}
-
-.processing-actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-}
-
-/* 空狀態樣式 */
-.empty-state {
-    padding: 2rem;
-}
-
-.empty-state-icon {
-    color: var(--apple-gray);
-}
-
-.empty-state-actions {
-    margin-top: 1rem;
-}
-
-/* 響應式設計 */
+/* 響應式優化 */
 @media (max-width: 768px) {
-    .report-header {
-        padding: 1.5rem;
-    }
-    
-    .report-item {
-        padding: 1rem;
-    }
-    
-    .report-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.75rem;
-    }
-    
-    .report-actions {
-        width: 100%;
-        justify-content: flex-start;
-    }
-    
-    .processing-actions {
-        flex-direction: column;
-    }
-    
-    .processing-actions .btn {
-        width: 100%;
+    .report-header h1 {
+        font-size: 1.75rem;
     }
 }
 </style>

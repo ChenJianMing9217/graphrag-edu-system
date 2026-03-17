@@ -17,47 +17,60 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
 @dataclass
 class EncoderConfig:
     """
-    BGE-M3 的 embedding backend 設定：
-    - model_name: 預設使用 BAAI/bge-m3
-    - device: "cpu" 或 "cuda"
-    - normalize: 是否回傳 L2-normalized 向量（建議 True）
+    Embedding Server 設定：
+    - url: 伺服器端點
     """
-    model_name: str = "BAAI/bge-m3"
-    device: str = "cuda"
-    normalize: bool = True
+    url: str = ""
+
+    def __post_init__(self):
+        # 從主設定檔載入
+        try:
+            from config import EMBED_CONFIG
+            self.url = self.url or EMBED_CONFIG.get('url', "http://192.168.150.136:8080/embed")
+        except ImportError:
+            self.url = self.url or "http://192.168.150.136:8080/embed"
 
 class TextEncoder:
     """
     TextEncoder 的責任只有一個：
-    - 把文字 encode 成 embedding 向量（np.ndarray）
+    - 透過遠端 API 把文字 encode 成 embedding 向量（np.ndarray）
     """
 
-    def __init__(self, cfg: EncoderConfig):
-        self.cfg = cfg
-        # 延後 import：避免你沒裝 sentence-transformers 時一 import 就炸
-        from sentence_transformers import SentenceTransformer  # type: ignore
-
-        self._model = SentenceTransformer(self.cfg.model_name, device=self.cfg.device)
+    def __init__(self, cfg: Optional[EncoderConfig] = None):
+        self.cfg = cfg or EncoderConfig()
+        import requests
+        self._requests = requests
 
     def encode(self, text: str) -> np.ndarray:
         text = (text or "").strip()
         if not text:
-            # 空字串回傳零向量（維度不重要，後面會被保護）
-            return np.zeros((1,), dtype=np.float32)
+            # 空字串回傳零向量
+            return np.zeros((1024,), dtype=np.float32)
 
-        emb = self._model.encode(
-            [text],
-            normalize_embeddings=self.cfg.normalize,
-        )
-        return np.asarray(emb[0], dtype=np.float32)
+        try:
+            res = self._requests.post(self.cfg.url, json={"inputs": text})
+            res.raise_for_status()
+            data = res.json()
+            # 支援不同伺服器回傳格式
+            if isinstance(data, dict) and "embedding" in data:
+                emb = data["embedding"]
+            elif isinstance(data, list):
+                emb = data[0]
+            else:
+                emb = data
+            
+            return np.asarray(emb, dtype=np.float32)
+        except Exception as e:
+            print(f"[TextEncoder] Encode error: {e}")
+            return np.zeros((1024,), dtype=np.float32)
 
     def encode_many(self, texts: List[str]) -> np.ndarray:
-        texts = [(t or "").strip() for t in texts]
-        emb = self._model.encode(
-            texts,
-            normalize_embeddings=self.cfg.normalize,
-        )
-        return np.asarray(emb, dtype=np.float32)
+        results = []
+        for t in texts:
+            results.append(self.encode(t))
+        if not results:
+            return np.empty((0, 1024), dtype=np.float32)
+        return np.stack(results, axis=0)
 
 def encode_anchors(
     encoder: TextEncoder,
